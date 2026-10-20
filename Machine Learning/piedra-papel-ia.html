@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Piedra, papel o IA</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: arena de juego a la izquierda (manos, botones, marcador, historial) y la "libreta" de la IA a la derecha; en celular todo en una columna */
+:root {
+  --bg: #eef2fb;
+  --surface: #ffffff;
+  --sunken: #e4eaf6;
+  --ink: #1a1f3a;
+  --muted: #59618a;
+  --line: #d2d9ea;
+  --you: #0f7d67;
+  --on-you: #ffffff;
+  --you-soft: #d5f0e8;
+  --ai: #d2470f;
+  --ai-soft: #fde2d4;
+  --sun: #e2a400;
+  --sun-soft: #fff1c4;
+  --lose: #c42b2b;
+  --lose-soft: #fbdede;
+  --tie: #7d6300;
+  --tie-soft: #f6ecc4;
+  --font-display: ui-rounded, "Segoe UI Variable Display", "SF Pro Rounded", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-num: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  --radius: 16px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10132a; --surface: #191e3a; --sunken: #232a4c; --ink: #eef1fb; --muted: #a2aacd; --line: #2f3762;
+    --you: #3fd3b0; --on-you: #05261f; --you-soft: #133a33; --ai: #ff8a5c; --ai-soft: #43241a;
+    --sun: #ffcf4d; --sun-soft: #3b3215; --lose: #ff7070; --lose-soft: #431c22; --tie: #ffd166; --tie-soft: #3b3215;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10132a; --surface: #191e3a; --sunken: #232a4c; --ink: #eef1fb; --muted: #a2aacd; --line: #2f3762;
+  --you: #3fd3b0; --on-you: #05261f; --you-soft: #133a33; --ai: #ff8a5c; --ai-soft: #43241a;
+  --sun: #ffcf4d; --sun-soft: #3b3215; --lose: #ff7070; --lose-soft: #431c22; --tie: #ffd166; --tie-soft: #3b3215;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 48px;
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 22px; }
+h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(2rem, 6vw, 3rem); line-height: 1; font-weight: 800; letter-spacing: -0.02em; }
+h2 { font-size: 1.3rem; font-weight: 800; }
+h3 { font-size: 0.98rem; font-weight: 700; }
+p { margin: 0; }
+header { display: grid; gap: 8px; }
+.eyebrow { font-size: 0.78rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ai); }
+.lede { color: var(--muted); max-width: 62ch; font-size: 1.05rem; }
+.lede b { color: var(--ink); }
+
+.game {
+  display: grid; gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "arena" "choices" "score" "brain" "history";
+}
+@media (min-width: 920px) {
+  .game {
+    grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr);
+    grid-template-areas: "arena brain" "choices brain" "score brain" "history brain";
+    grid-template-rows: auto auto auto 1fr;
+  }
+}
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+
+/* Arena */
+.arena { grid-area: arena; padding: 18px 16px 16px; display: grid; gap: 12px; }
+.sides { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
+.side { display: grid; justify-items: center; gap: 4px; min-width: 0; }
+.who { font-family: var(--font-display); font-weight: 800; font-size: 0.95rem; padding: 2px 12px; border-radius: 999px; }
+.you .who { background: var(--you-soft); color: var(--you); }
+.ai .who { background: var(--ai-soft); color: var(--ai); }
+.hand { font-size: clamp(3.6rem, 16vw, 6.4rem); line-height: 1.15; height: 1.2em; display: grid; place-items: center; }
+.hand.mirror { transform: scaleX(-1); }
+.glyph { display: inline-block; }
+.glyph.shaking { animation: shake 0.3s ease-in-out 3; }
+@keyframes shake { 0%, 100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-22%) rotate(-12deg); } }
+.pick { font-size: 0.92rem; color: var(--muted); min-height: 1.5em; text-align: center; }
+.vs { font-family: var(--font-display); font-weight: 800; color: var(--muted); font-size: 1.1rem; }
+.verdict {
+  text-align: center; font-family: var(--font-display); font-weight: 800; font-size: clamp(1.1rem, 3.6vw, 1.4rem);
+  padding: 10px 12px; border-radius: 12px; background: var(--sunken); color: var(--ink);
+}
+.verdict.win { background: var(--you-soft); color: var(--you); }
+.verdict.lose { background: var(--lose-soft); color: var(--lose); }
+.verdict.tie { background: var(--tie-soft); color: var(--tie); }
+.verdict.pop { animation: pop 0.35s ease-out; }
+@keyframes pop { from { transform: scale(0.9); opacity: 0.4; } to { transform: scale(1); opacity: 1; } }
+.lock { font-size: 0.86rem; color: var(--muted); text-align: center; }
+
+/* Botones de jugada */
+.choices { grid-area: choices; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.choice {
+  font: inherit; cursor: pointer; display: grid; justify-items: center; gap: 2px;
+  padding: 14px 6px 12px; min-height: 118px; border-radius: var(--radius);
+  background: var(--surface); color: var(--ink); border: 2px solid var(--line);
+  box-shadow: 0 4px 0 var(--line); transition: transform 0.08s, box-shadow 0.08s, border-color 0.15s;
+}
+.choice .em { font-size: clamp(2.4rem, 10vw, 3.2rem); line-height: 1.1; }
+.choice .nm { font-family: var(--font-display); font-weight: 800; font-size: 1.05rem; }
+.choice .key { font-size: 0.72rem; color: var(--muted); }
+.choice:hover:not(:disabled) { border-color: var(--you); }
+.choice:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 var(--line); }
+.choice:disabled { cursor: default; opacity: 0.55; }
+:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
+
+/* Marcador */
+.score { grid-area: score; display: grid; gap: 10px; }
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 420px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tile { padding: 10px 12px; display: grid; gap: 0; }
+.tile .k { font-size: 0.8rem; color: var(--muted); }
+.tile .v { font-family: var(--font-num); font-size: 1.7rem; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.tile.w .v { color: var(--you); }
+.tile.l .v { color: var(--lose); }
+.tile.t .v { color: var(--tie); }
+.resets { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn {
+  font: inherit; font-weight: 600; font-size: 0.92rem; cursor: pointer;
+  padding: 8px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+}
+.btn:hover { border-color: var(--muted); }
+.btn.danger { color: var(--lose); }
+.note { font-size: 0.86rem; color: var(--muted); }
+
+/* Historial */
+.history { grid-area: history; padding: 16px; display: grid; gap: 10px; align-content: start; }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+td.em { font-size: 1.3rem; line-height: 1; }
+.chip { display: inline-block; font-size: 0.8rem; font-weight: 700; padding: 2px 9px; border-radius: 999px; }
+.chip.win { background: var(--you-soft); color: var(--you); }
+.chip.lose { background: var(--lose-soft); color: var(--lose); }
+.chip.tie { background: var(--tie-soft); color: var(--tie); }
+.ok { color: var(--you); font-weight: 700; }
+.no { color: var(--muted); }
+.empty { color: var(--muted); font-size: 0.92rem; }
+
+/* Panel de la IA */
+.brain { grid-area: brain; padding: 18px 16px; display: grid; gap: 18px; align-content: start; }
+.brain-head { display: grid; gap: 4px; }
+.brain-head p { color: var(--muted); font-size: 0.92rem; }
+.bubble {
+  background: var(--ai-soft); color: var(--ink); border-radius: 14px; padding: 12px 14px;
+  display: grid; gap: 6px; font-size: 0.98rem;
+}
+.bubble .main { font-weight: 600; }
+.bubble .sub { font-size: 0.9rem; color: var(--muted); }
+.block { display: grid; gap: 8px; }
+.src { font-size: 0.85rem; color: var(--muted); }
+.bars { display: grid; gap: 6px; }
+.bar { display: grid; grid-template-columns: 6.6em minmax(0, 1fr) 4.2em; align-items: center; gap: 8px; font-size: 0.92rem; }
+.bar .lbl { white-space: nowrap; }
+.track { height: 14px; background: var(--sunken); border-radius: 999px; overflow: hidden; }
+.fill { height: 100%; border-radius: 999px; background: var(--you); width: 0; transition: width 0.4s ease; }
+.bars.pred .fill { background: var(--sun); }
+.bar.top .lbl { font-weight: 700; }
+.bar .val { font-family: var(--font-num); font-size: 0.85rem; text-align: right; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .fill { transition: none; } .glyph.shaking, .verdict.pop { animation: none; } }
+
+.matrix th, .matrix td { text-align: center; padding: 6px 4px; border: 0; }
+.matrix th:first-child, .matrix td:first-child { text-align: left; }
+.matrix td.cell { position: relative; font-family: var(--font-num); font-weight: 600; border-radius: 8px; }
+.matrix td.cell::before {
+  content: ""; position: absolute; inset: 2px; border-radius: 8px; background: var(--you);
+  opacity: calc(var(--p, 0) * 0.55); z-index: 0;
+}
+.matrix td.cell span { position: relative; z-index: 1; }
+.matrix td.cell.max span { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.matrix tr.now td:first-child { font-weight: 700; color: var(--ai); }
+.matrix th.c { font-size: 1.15rem; }
+.hint { font-size: 0.84rem; color: var(--muted); }
+.acc { background: var(--sunken); border-radius: 12px; padding: 10px 12px; font-size: 0.92rem; }
+.acc b { font-family: var(--font-num); }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 0.92rem; cursor: pointer; }
+.check input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--ai); }
+.spy { border: 2px dashed var(--sun); border-radius: 12px; padding: 12px; display: grid; gap: 8px; }
+details { border-top: 1px solid var(--line); padding-top: 12px; }
+summary { cursor: pointer; font-family: var(--font-display); font-weight: 700; }
+details ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; color: var(--muted); font-size: 0.93rem; }
+details ol b { color: var(--ink); }
+details p { margin-top: 10px; font-size: 0.93rem; color: var(--muted); }
+
+/* Pruebas */
+.tests { display: grid; gap: 12px; }
+.test-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.test { padding: 16px; display: grid; gap: 8px; align-content: start; }
+.test .tag { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ai); }
+.test p { font-size: 0.94rem; color: var(--muted); }
+.test p b { color: var(--ink); }
+.why { padding: 16px; display: grid; gap: 6px; max-width: 80ch; }
+.why p { color: var(--muted); }
+footer { font-size: 0.86rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Una IA que aprende mientras jugás</span>
+    <h1>Piedra, papel o IA</h1>
+    <p class="lede">La IA arranca sin saber nada de vos. Cada ronda <b>anota qué jugaste</b> y busca tus costumbres para adelantarse. A la derecha podés ver exactamente lo que está aprendiendo.</p>
+  </header>
+
+  <main class="game">
+    <section class="arena card" aria-label="Arena">
+      <div class="sides">
+        <div class="side you">
+          <span class="who">Vos</span>
+          <div class="hand"><span class="glyph" id="hand-you">✊</span></div>
+          <span class="pick" id="pick-you">Elegí abajo</span>
+        </div>
+        <span class="vs">VS</span>
+        <div class="side ai">
+          <span class="who">IA</span>
+          <div class="hand mirror"><span class="glyph" id="hand-ai">✊</span></div>
+          <span class="pick" id="pick-ai">Esperando…</span>
+        </div>
+      </div>
+      <div class="verdict" id="verdict" role="status" aria-live="polite">¿Quién gana? Elegí tu jugada.</div>
+      <p class="lock" id="lock">🔒 La IA ya eligió su jugada. La muestra recién cuando elijas la tuya.</p>
+    </section>
+
+    <div class="choices" role="group" aria-label="Tu jugada">
+      <button class="choice" type="button" data-move="0"><span class="em" aria-hidden="true">✊</span><span class="nm">Piedra</span><span class="key">tecla 1</span></button>
+      <button class="choice" type="button" data-move="1"><span class="em" aria-hidden="true">✋</span><span class="nm">Papel</span><span class="key">tecla 2</span></button>
+      <button class="choice" type="button" data-move="2"><span class="em" aria-hidden="true">✌️</span><span class="nm">Tijera</span><span class="key">tecla 3</span></button>
+    </div>
+
+    <section class="score" aria-label="Marcador">
+      <div class="tiles">
+        <div class="tile card w"><span class="k">Ganaste</span><span class="v" id="sc-win">0</span></div>
+        <div class="tile card l"><span class="k">Perdiste</span><span class="v" id="sc-lose">0</span></div>
+        <div class="tile card t"><span class="k">Empates</span><span class="v" id="sc-tie">0</span></div>
+        <div class="tile card"><span class="k">Rondas</span><span class="v" id="sc-rounds">0</span></div>
+      </div>
+      <div class="resets">
+        <button class="btn" type="button" id="btn-score">Reiniciar marcador</button>
+        <button class="btn danger" type="button" id="btn-forget">Borrar lo aprendido</button>
+        <span class="note" id="reset-note" aria-live="polite"></span>
+      </div>
+    </section>
+
+    <section class="history card" aria-label="Historial">
+      <h2>Últimas 10 rondas</h2>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Ronda</th><th>Vos</th><th>IA</th><th>Resultado</th><th>¿Adivinó?</th></tr></thead>
+          <tbody id="hist-body"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="hist-empty">Todavía no hay rondas. Tu primera jugada aparece acá.</p>
+      <p class="hint">🎲 = esa ronda la IA jugó al azar. “¿Adivinó?” muestra qué esperaba que jugaras.</p>
+    </section>
+
+    <aside class="brain card" aria-label="Qué está aprendiendo">
+      <div class="brain-head">
+        <h2>Qué está aprendiendo</h2>
+        <p>Todo lo que ves acá son conteos reales de tus jugadas. No hay números inventados.</p>
+      </div>
+
+      <div class="bubble" id="bubble" aria-live="polite">
+        <span class="main" id="ex-main">Todavía no jugaste. Para la primera ronda no tengo datos, así que voy a elegir al azar.</span>
+        <span class="sub" id="ex-sub"></span>
+      </div>
+
+      <div class="block">
+        <h3>Qué esperaba que jugaras</h3>
+        <p class="src" id="pred-src">Sin datos: las tres opciones valen lo mismo.</p>
+        <div class="bars pred" id="bars-pred"></div>
+      </div>
+
+      <div class="block">
+        <h3>Cuántas veces jugaste cada opción</h3>
+        <div class="bars" id="bars-count"></div>
+      </div>
+
+      <div class="block">
+        <h3>Qué jugás después de cada jugada</h3>
+        <div class="table-scroll">
+          <table class="matrix" id="matrix"></table>
+        </div>
+        <p class="hint">Cada fila cuenta qué elegiste justo después de esa jugada. La fila en naranja (→) es la que la IA mira para la próxima ronda, porque es tu última jugada.</p>
+      </div>
+
+      <p class="acc" id="acc"></p>
+
+      <label class="check"><input type="checkbox" id="spy"> Espiar qué predice para la próxima ronda (hace trampa a tu favor)</label>
+      <div class="spy" id="spy-box" hidden>
+        <p class="src" id="spy-text"></p>
+        <div class="bars pred" id="bars-spy"></div>
+      </div>
+
+      <details>
+        <summary>Cómo funciona por dentro (el método real)</summary>
+        <ol>
+          <li><b>Antes de que elijas</b>, la IA mira tu última jugada y busca en la tabla qué jugaste después de ella otras veces.</li>
+          <li>Si esa fila tiene <b>al menos 2 datos</b>, usa esa fila. Si no, usa tus totales (cuántas veces jugaste cada opción).</li>
+          <li>Convierte los conteos en probabilidades <b>sumando 1 a cada opción</b>, para no dar nada por imposible. Ejemplo: conteos 3, 0, 1 → 4/7, 1/7 y 2/7.</li>
+          <li>Supone que vas a jugar la opción <b>más probable</b> y elige la que le gana. Si hay empate entre opciones, sortea entre ellas.</li>
+          <li><b>1 de cada 5 rondas juega al azar</b>, para que no sea totalmente predecible.</li>
+          <li>Guarda su jugada, espera la tuya, muestra el resultado y <b>recién ahí anota</b> lo que jugaste. No puede ver tu elección antes de decidir.</li>
+        </ol>
+        <p>Este método se llama <b>modelo de frecuencias</b> o cadena de Markov de primer orden: solo cuenta y compara, y recuerda una jugada hacia atrás. No es una red neuronal. Lo aprendido se guarda en este navegador hasta que lo borres.</p>
+      </details>
+    </aside>
+  </main>
+
+  <section class="tests">
+    <h2>Tres pruebas para entender cómo aprende</h2>
+    <div class="test-grid">
+      <article class="test card">
+        <span class="tag">Prueba 1</span>
+        <h3>Repetí siempre lo mismo</h3>
+        <p>Borrá lo aprendido y jugá <b>✊ piedra 15 veces</b>. Desde la segunda o tercera ronda la IA espera piedra y juega papel casi siempre. Mirá cómo crece la casilla “después de ✊ → ✊” en la tabla. Vas a perder cerca de 8 de cada 10 rondas: las que no pierdas son las que le tocó azar.</p>
+      </article>
+      <article class="test card">
+        <span class="tag">Prueba 2</span>
+        <h3>Repetí una secuencia</h3>
+        <p>Borrá lo aprendido y jugá <b>✊ ✋ ✌️ ✊ ✋ ✌️…</b> unas 6 vueltas. Parece variado, pero la tabla forma una diagonal: después de ✊ siempre viene ✋. En dos o tres vueltas te descubre. Después probá <b>✊ ✊ ✋</b> repetido: le cuesta más, porque después de ✊ a veces viene ✊ y a veces ✋, y solo mira una jugada hacia atrás.</p>
+      </article>
+      <article class="test card">
+        <span class="tag">Prueba 3</span>
+        <h3>Jugá al azar</h3>
+        <p>Borrá lo aprendido y decidí cada jugada con un dado: <b>1–2 ✊, 3–4 ✋, 5–6 ✌️</b>. Jugá 30 rondas. Las barras quedan parejas, la IA adivina más o menos 1 de cada 3 y el marcador queda equilibrado. No puede aprender un patrón que no existe.</p>
+      </article>
+    </div>
+    <div class="why card">
+      <h3>¿Por qué la IA no tiene garantizado ganar?</h3>
+      <p>Solo puede aprovechar costumbres que existan y que pueda ver. Si jugás al azar, no hay nada que aprender. Solo mira una jugada hacia atrás, así que no ve patrones más largos. Necesita algunas rondas para juntar datos. Juega al azar 1 de cada 5 veces a propósito. Y si vos sabés cómo piensa, podés engañarla: usá el modo espía y vas a ver que le ganás casi siempre.</p>
+    </div>
+  </section>
+
+  <footer>Funciona sin internet ni servicios externos. Todo el cálculo ocurre en esta página y lo aprendido queda guardado solo en este navegador.</footer>
+</div>
+
+<script>
+const MOVES = [
+  { e: '✊', n: 'piedra' },
+  { e: '✋', n: 'papel' },
+  { e: '✌️', n: 'tijera' },
+];
+// CORE-START
+const EXPLORE = 0.2;
+const MIN_ROW = 2;
+function emptyMemory() { return { counts: [0, 0, 0], trans: [[0, 0, 0], [0, 0, 0], [0, 0, 0]], last: null }; }
+function beats(m) { return (m + 1) % 3; }
+function outcome(you, ai) { const d = (you - ai + 3) % 3; return d === 0 ? 'tie' : d === 1 ? 'win' : 'lose'; }
+function predict(mem) {
+  const total = mem.counts[0] + mem.counts[1] + mem.counts[2];
+  if (total === 0) return { source: 'none', probs: [1 / 3, 1 / 3, 1 / 3], base: [0, 0, 0], sum: 0, prev: null, tied: [0, 1, 2] };
+  let source = 'total', base = mem.counts;
+  if (mem.last !== null) {
+    const row = mem.trans[mem.last];
+    if (row[0] + row[1] + row[2] >= MIN_ROW) { source = 'after'; base = row; }
+  }
+  const sum = base[0] + base[1] + base[2];
+  const probs = base.map((c) => (c + 1) / (sum + 3));
+  const max = Math.max(...base);
+  return { source, probs, base: base.slice(), sum, prev: mem.last, tied: [0, 1, 2].filter((m) => base[m] === max) };
+}
+function decide(mem, rng) {
+  const p = predict(mem);
+  if (p.source === 'none') return { ...p, predicted: null, random: true, ai: Math.floor(rng() * 3) };
+  const predicted = p.tied[Math.floor(rng() * p.tied.length)];
+  const random = rng() < EXPLORE;
+  return { ...p, predicted, random, ai: random ? Math.floor(rng() * 3) : beats(predicted) };
+}
+function learn(mem, you) {
+  mem.counts[you]++;
+  if (mem.last !== null) mem.trans[mem.last][you]++;
+  mem.last = you;
+}
+// CORE-END
+
+const KEY = 'piedra-papel-ia-v1';
+const $ = (id) => document.getElementById(id);
+const nm = (m) => `${MOVES[m].n} ${MOVES[m].e}`;
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+const pct = (v) => Math.round(v * 100) + ' %';
+const listMoves = (ms) => {
+  const parts = ms.map(nm);
+  return parts.length === 1 ? parts[0] : parts.slice(0, -1).join(', ') + ' y ' + parts[parts.length - 1];
+};
+
+function fresh() {
+  return { mem: emptyMemory(), score: { win: 0, lose: 0, tie: 0 }, round: 0, hits: 0, guesses: 0, history: [], lastRound: null };
+}
+function load() {
+  try {
+    const s = JSON.parse(localStorage.getItem(KEY));
+    if (s && s.mem && s.score) return s;
+  } catch (e) {}
+  return null;
+}
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {}
+}
+
+let S = load() || fresh();
+let pending = decide(S.mem, Math.random);
+let busy = false;
+
+function play(you) {
+  if (busy) return;
+  busy = true;
+  const d = pending;
+  const res = outcome(you, d.ai);
+  S.round++;
+  S.score[res]++;
+  if (d.predicted !== null) { S.guesses++; if (d.predicted === you) S.hits++; }
+  learn(S.mem, you);
+  S.history.unshift({ n: S.round, you, ai: d.ai, res, predicted: d.predicted, random: d.random });
+  S.history = S.history.slice(0, 10);
+  S.lastRound = { d, you, res };
+  pending = decide(S.mem, Math.random);
+  save();
+  animate(you, d, res, () => { renderAll(); busy = false; setChoicesDisabled(false); });
+}
+
+function setChoicesDisabled(on) {
+  document.querySelectorAll('.choice').forEach((b) => { b.disabled = on; });
+}
+
+function animate(you, d, res, done) {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const gy = $('hand-you'), ga = $('hand-ai'), v = $('verdict');
+  setChoicesDisabled(true);
+  gy.textContent = '✊'; ga.textContent = '✊';
+  $('pick-you').textContent = '…'; $('pick-ai').textContent = '…';
+  v.className = 'verdict';
+  v.textContent = 'Piedra… papel… ¡tijera!';
+  if (!reduce) { gy.classList.add('shaking'); ga.classList.add('shaking'); }
+  setTimeout(() => {
+    gy.classList.remove('shaking'); ga.classList.remove('shaking');
+    gy.textContent = MOVES[you].e; ga.textContent = MOVES[d.ai].e;
+    $('pick-you').textContent = cap(MOVES[you].n);
+    $('pick-ai').textContent = cap(MOVES[d.ai].n) + (d.random ? ' 🎲' : '');
+    let text;
+    if (res === 'win') text = `¡Ganaste! ${cap(MOVES[you].n)} le gana a ${MOVES[d.ai].n}.`;
+    else if (res === 'lose') text = `Perdiste: ${MOVES[d.ai].n} le gana a ${MOVES[you].n}.`;
+    else text = `Empate: los dos eligieron ${MOVES[you].n}.`;
+    v.textContent = text;
+    v.className = 'verdict ' + res;
+    void v.offsetWidth;
+    v.classList.add('pop');
+    done();
+  }, reduce ? 150 : 900);
+}
+
+function explain(lr) {
+  const { d, you } = lr;
+  let main;
+  if (d.source === 'none') {
+    main = 'Era la primera ronda: no sabía nada de vos, así que elegí al azar.';
+  } else {
+    let reason;
+    const pred = d.predicted;
+    if (d.source === 'after') {
+      reason = d.tied.length > 1
+        ? `Después de ${nm(d.prev)} jugaste ${listMoves(d.tied)} la misma cantidad de veces, así que dudé y supuse ${nm(pred)}.`
+        : `Después de ${nm(d.prev)} solés jugar ${nm(pred)} (${d.base[pred]} de ${d.sum} veces).`;
+    } else {
+      const pre = d.prev !== null
+        ? `Todavía tengo pocos datos de qué jugás después de ${nm(d.prev)}, así que miré tus totales: `
+        : 'Miré tus totales: ';
+      reason = pre + (d.tied.length > 1
+        ? `jugaste ${listMoves(d.tied)} la misma cantidad de veces, así que supuse ${nm(pred)}.`
+        : `jugaste ${nm(pred)} ${d.base[pred]} de ${d.sum} veces.`);
+    }
+    main = d.random
+      ? `${reason} Pero esta vez elegí al azar a propósito (lo hago 1 de cada 5 rondas) y salió ${nm(d.ai)}.`
+      : `${reason} Por eso elegí ${nm(d.ai)}, que le gana a ${MOVES[pred].n}.`;
+  }
+  let sub = '';
+  if (d.predicted !== null) sub += d.predicted === you ? `Acerté: jugaste ${nm(you)}. ` : `No acerté: jugaste ${nm(you)}. `;
+  sub += d.prev !== null ? `Anoté que después de ${nm(d.prev)} jugaste ${nm(you)}.` : `Anoté que jugaste ${nm(you)}.`;
+  return { main, sub };
+}
+
+function sourceText(d, past) {
+  if (d.source === 'none') return 'Sin datos: las tres opciones valen lo mismo.';
+  const verb = past ? 'Usó' : 'Va a usar';
+  if (d.source === 'after') return `${verb} lo que jugás después de ${nm(d.prev)} (${d.sum} ${d.sum === 1 ? 'dato' : 'datos'}).`;
+  return `${verb} tus totales (${d.sum} ${d.sum === 1 ? 'jugada' : 'jugadas'}), porque la fila de ${d.prev !== null ? nm(d.prev) : 'tu última jugada'} tiene menos de 2 datos.`;
+}
+
+function renderBars(el, values, labels, top) {
+  const max = Math.max(...values.map((v) => v.frac), 1e-9);
+  el.innerHTML = MOVES.map((m, i) => `
+    <div class="bar${top.includes(i) ? ' top' : ''}">
+      <span class="lbl">${m.e} ${cap(m.n)}</span>
+      <span class="track"><span class="fill" style="width:${(values[i].frac / max * 100).toFixed(1)}%"></span></span>
+      <span class="val">${labels[i]}</span>
+    </div>`).join('');
+}
+
+function renderBrain() {
+  const lr = S.lastRound;
+  if (lr) {
+    const ex = explain(lr);
+    $('ex-main').textContent = ex.main;
+    $('ex-sub').textContent = ex.sub;
+  } else {
+    $('ex-main').textContent = S.mem.counts.some((c) => c > 0)
+      ? 'Recuerdo tus partidas anteriores. Elegí una jugada y te cuento por qué elegí la mía.'
+      : 'Todavía no jugaste. Para la primera ronda no tengo datos, así que voy a elegir al azar.';
+    $('ex-sub').textContent = '';
+  }
+
+  const pd = lr ? lr.d : pending;
+  $('pred-src').textContent = lr ? sourceText(pd, true) : 'Antes de la primera ronda las tres opciones valen lo mismo.';
+  renderBars($('bars-pred'), pd.probs.map((p) => ({ frac: p })), pd.probs.map(pct), pd.predicted !== null && pd.predicted !== undefined ? [pd.predicted] : []);
+
+  const c = S.mem.counts, tot = c[0] + c[1] + c[2];
+  const cmax = Math.max(...c);
+  renderBars($('bars-count'), c.map((v) => ({ frac: tot ? v / tot : 0 })), c.map((v) => `${v} ${tot ? '(' + pct(v / tot) + ')' : ''}`.trim()), tot ? [0, 1, 2].filter((i) => c[i] === cmax) : []);
+
+  const rows = S.mem.trans.map((row, i) => {
+    const s = row[0] + row[1] + row[2], mx = Math.max(...row);
+    const cells = row.map((v) => `<td class="cell${s && v === mx ? ' max' : ''}" style="--p:${s ? (v / s).toFixed(3) : 0}"><span>${v}</span></td>`).join('');
+    return `<tr class="${S.mem.last === i ? 'now' : ''}"><td>${S.mem.last === i ? '→ ' : ''}Después de ${MOVES[i].e}</td>${cells}<td class="hint">${s}</td></tr>`;
+  }).join('');
+  $('matrix').innerHTML = `<thead><tr><th>Tu jugada anterior</th>${MOVES.map((m) => `<th class="c" title="${m.n}">${m.e}</th>`).join('')}<th>Total</th></tr></thead><tbody>${rows}</tbody>`;
+
+  $('acc').innerHTML = S.guesses
+    ? `Adivinó tu jugada <b>${S.hits} de ${S.guesses}</b> veces (${pct(S.hits / S.guesses)}). Adivinando al azar acertaría más o menos 1 de cada 3 (33 %).`
+    : 'Todavía no intentó adivinar. Al azar acertaría más o menos 1 de cada 3 veces (33 %).';
+
+  const spyOn = $('spy').checked;
+  $('spy-box').hidden = !spyOn;
+  if (spyOn) {
+    const p = pending;
+    $('spy-text').textContent = p.source === 'none'
+      ? 'No tiene datos: va a elegir al azar.'
+      : `${sourceText(p, false)} Espera que juegues ${nm(p.predicted)}, así que va a jugar ${nm(beats(p.predicted))}… salvo que le toque azar (1 de cada 5).`;
+    renderBars($('bars-spy'), p.probs.map((v) => ({ frac: v })), p.probs.map(pct), p.predicted !== null ? [p.predicted] : []);
+  }
+}
+
+function renderScore() {
+  $('sc-win').textContent = S.score.win;
+  $('sc-lose').textContent = S.score.lose;
+  $('sc-tie').textContent = S.score.tie;
+  $('sc-rounds').textContent = S.score.win + S.score.lose + S.score.tie;
+}
+
+function renderHistory() {
+  const label = { win: 'Ganaste', lose: 'Perdiste', tie: 'Empate' };
+  $('hist-empty').hidden = S.history.length > 0;
+  $('hist-body').innerHTML = S.history.map((h) => `
+    <tr>
+      <td>#${h.n}</td>
+      <td class="em" title="${MOVES[h.you].n}">${MOVES[h.you].e}</td>
+      <td class="em" title="${MOVES[h.ai].n}">${MOVES[h.ai].e}${h.random ? ' <small title="al azar">🎲</small>' : ''}</td>
+      <td><span class="chip ${h.res}">${label[h.res]}</span></td>
+      <td>${h.predicted === null ? '<span class="no">sin datos</span>' : h.predicted === h.you
+        ? `<span class="ok">Sí, esperaba ${MOVES[h.predicted].e}</span>`
+        : `<span class="no">No, esperaba ${MOVES[h.predicted].e}</span>`}</td>
+    </tr>`).join('');
+}
+
+function renderAll() { renderScore(); renderHistory(); renderBrain(); }
+
+function note(text) {
+  $('reset-note').textContent = text;
+  clearTimeout(note.t);
+  note.t = setTimeout(() => { $('reset-note').textContent = ''; }, 4000);
+}
+
+function resetArena() {
+  $('hand-you').textContent = '✊'; $('hand-ai').textContent = '✊';
+  $('pick-you').textContent = 'Elegí abajo'; $('pick-ai').textContent = 'Esperando…';
+  $('verdict').className = 'verdict';
+  $('verdict').textContent = '¿Quién gana? Elegí tu jugada.';
+}
+
+document.querySelectorAll('.choice').forEach((b) => b.addEventListener('click', () => play(+b.dataset.move)));
+document.addEventListener('keydown', (e) => {
+  if (e.altKey || e.ctrlKey || e.metaKey) return;
+  const i = ['1', '2', '3'].indexOf(e.key);
+  if (i >= 0 && !(e.target instanceof HTMLInputElement && e.target.type !== 'checkbox')) play(i);
+});
+$('btn-score').addEventListener('click', () => {
+  if (busy) return;
+  S.score = { win: 0, lose: 0, tie: 0 };
+  S.round = 0;
+  S.history = [];
+  save(); resetArena(); renderAll();
+  note('Marcador en cero. La IA sigue recordando tus costumbres.');
+});
+$('btn-forget').addEventListener('click', () => {
+  if (busy) return;
+  S.mem = emptyMemory();
+  S.hits = 0; S.guesses = 0; S.lastRound = null;
+  pending = decide(S.mem, Math.random);
+  save(); resetArena(); renderAll();
+  note('Listo: la IA olvidó todo. Vuelve a empezar eligiendo al azar.');
+});
+$('spy').addEventListener('change', renderBrain);
+
+renderAll();
+</script>
+</body>
+</html>

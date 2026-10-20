@@ -1,0 +1,763 @@
+<meta charset="utf-8">
+<title>Laboratorio de neuronas</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=JetBrains+Mono:wght@400;500&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+/* Layout: mesa de laboratorio — controles a la izquierda, mapa y curva de error a la derecha, explicación y experimentos debajo */
+:root {
+  --bg: #f2f4f6;
+  --surface: #ffffff;
+  --sunken: #e9edf1;
+  --fg: #16202b;
+  --muted: #586474;
+  --line: #d6dce3;
+  --accent: #0e7c74;
+  --accent-fg: #ffffff;
+  --red: #d1435b;
+  --blue: #2f6fd6;
+  --amber: #b5730b;
+  --ok-bg: #ddf2ee; --ok-fg: #0b5f58;
+  --warn-bg: #fbefd9; --warn-fg: #7f4c00;
+  --bad-bg: #fbe2e6; --bad-fg: #9e2238;
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1319; --surface: #161d25; --sunken: #1d2630; --fg: #e5eaf0; --muted: #96a2b0; --line: #2a3541;
+    --accent: #3bbdb0; --accent-fg: #05201d; --red: #f06c7f; --blue: #6ea2f6; --amber: #e5a640;
+    --ok-bg: #0f2e2b; --ok-fg: #7fe0d5; --warn-bg: #3a2a0d; --warn-fg: #f4c46b; --bad-bg: #3d1820; --bad-fg: #ff9cab;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1319; --surface: #161d25; --sunken: #1d2630; --fg: #e5eaf0; --muted: #96a2b0; --line: #2a3541;
+  --accent: #3bbdb0; --accent-fg: #05201d; --red: #f06c7f; --blue: #6ea2f6; --amber: #e5a640;
+  --ok-bg: #0f2e2b; --ok-fg: #7fe0d5; --warn-bg: #3a2a0d; --warn-fg: #f4c46b; --bad-bg: #3d1820; --bad-fg: #ff9cab;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 48px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 28px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(1.9rem, 4vw, 2.6rem); line-height: 1.05; letter-spacing: -0.01em; }
+h2 { font-size: 1.35rem; }
+h3 { font-size: 1.05rem; }
+p { margin: 0; }
+.eyebrow { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+header { display: grid; gap: 10px; max-width: 70ch; }
+.lede { color: var(--muted); font-size: 1.05rem; }
+
+.lab { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 880px) { .lab { grid-template-columns: minmax(0, 1fr); } }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); display: grid; }
+.panel section { padding: 16px; display: grid; gap: 12px; border-top: 1px solid var(--line); }
+.panel section:first-child { border-top: 0; }
+.label { font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+
+.actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+button { font: inherit; cursor: pointer; }
+.btn {
+  border: 1px solid var(--line); background: var(--sunken); color: var(--fg);
+  border-radius: 8px; padding: 9px 10px; font-weight: 600; font-size: 0.95rem;
+}
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn.small { padding: 6px 10px; font-size: 0.85rem; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--sunken); border: 1px solid var(--line); border-radius: 8px; padding: 3px; gap: 3px; }
+.seg button { border: 0; background: transparent; color: var(--muted); border-radius: 6px; padding: 6px 4px; font-size: 0.88rem; font-weight: 600; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line); }
+
+.field { display: grid; gap: 4px; }
+.field-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.field-head label { font-weight: 600; font-size: 0.95rem; }
+output { font-family: var(--font-mono); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.hint { font-size: 0.82rem; color: var(--muted); }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+.check { display: flex; align-items: center; gap: 8px; font-size: 0.92rem; }
+.check input { accent-color: var(--accent); width: 16px; height: 16px; }
+
+.stage { display: grid; gap: 16px; min-width: 0; }
+.stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+@media (max-width: 640px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .stats .stat:first-child { grid-column: 1 / -1; } }
+.stat { background: var(--surface); padding: 10px 12px; display: grid; gap: 2px; }
+.stat .k { font-size: 0.78rem; color: var(--muted); }
+.stat .v { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 500; font-variant-numeric: tabular-nums; }
+.stat .v.tr { color: var(--accent); }
+.stat .v.te { color: var(--amber); }
+
+.status-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pill { font-size: 0.82rem; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: var(--sunken); color: var(--muted); }
+.pill.ok { background: var(--ok-bg); color: var(--ok-fg); }
+.pill.warn { background: var(--warn-bg); color: var(--warn-fg); }
+.pill.bad { background: var(--bad-bg); color: var(--bad-fg); }
+.status-msg { font-size: 0.88rem; color: var(--muted); }
+
+.charts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 1060px) { .charts { grid-template-columns: minmax(0, 1fr); } }
+figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: grid; gap: 10px; min-width: 0; }
+figcaption { display: grid; gap: 2px; }
+figcaption .t { font-family: var(--font-display); font-weight: 600; font-size: 1.02rem; }
+figcaption .s { font-size: 0.86rem; color: var(--muted); }
+.map-box { width: 100%; max-width: 520px; aspect-ratio: 1; justify-self: center; }
+.loss-box { width: 100%; height: 260px; }
+canvas { display: block; width: 100%; height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.82rem; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+.sw.red { background: var(--red); } .sw.blue { background: var(--blue); }
+.sw.ring { background: var(--surface); border: 2px solid var(--muted); }
+.sw.fill { background: var(--muted); }
+.sw.err { background: transparent; border: 1.5px solid var(--fg); width: 15px; height: 15px; }
+.ln { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
+.ln.tr { background: var(--accent); } .ln.te { background: var(--amber); }
+.net-box { width: 100%; }
+
+.explain { display: grid; gap: 14px; }
+.explain-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px 28px; }
+.explain-grid div { display: grid; gap: 4px; }
+.explain-grid p { color: var(--muted); max-width: 60ch; }
+.explain-grid strong { color: var(--fg); }
+
+.experiments { display: grid; gap: 14px; }
+.exp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.exp { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: grid; gap: 10px; align-content: start; }
+.exp .tag { font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
+.exp ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; color: var(--muted); }
+.exp ol strong { color: var(--fg); }
+.exp .q { font-size: 0.92rem; border-left: 3px solid var(--line); padding-left: 10px; }
+.exp .btn { justify-self: start; }
+footer { color: var(--muted); font-size: 0.86rem; max-width: 75ch; }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Aprendizaje automático desde cero</span>
+    <h1>Laboratorio de neuronas</h1>
+    <p class="lede">Una red neuronal chiquita aprende a separar puntos rojos y azules mirando solo su posición. Apretá <strong>Entrenar</strong> y mirá cómo se mueve la frontera mientras baja el error.</p>
+  </header>
+
+  <div class="lab">
+    <aside class="panel" aria-label="Controles">
+      <section>
+        <span class="label">Entrenamiento</span>
+        <div class="actions">
+          <button class="btn primary" id="btn-train" type="button">Entrenar</button>
+          <button class="btn" id="btn-pause" type="button" disabled>Pausar</button>
+          <button class="btn" id="btn-reset" type="button">Reiniciar</button>
+        </div>
+        <div class="field">
+          <div class="field-head"><label>Ritmo de la animación</label></div>
+          <div class="seg" id="seg-pace" role="group" aria-label="Ritmo de la animación">
+            <button type="button" data-v="1" aria-pressed="false">Lento</button>
+            <button type="button" data-v="10" aria-pressed="true">Normal</button>
+            <button type="button" data-v="60" aria-pressed="false">Rápido</button>
+          </div>
+          <span class="hint">Cuántas épocas corre por cuadro. No cambia lo que aprende, solo lo rápido que lo ves.</span>
+        </div>
+      </section>
+
+      <section>
+        <span class="label">La red</span>
+        <div class="field">
+          <div class="field-head"><label for="in-hidden">Neuronas ocultas</label><output id="out-hidden">6</output></div>
+          <input type="range" id="in-hidden" min="1" max="32" step="1" value="6">
+          <span class="hint">Más neuronas = fronteras más curvas y más capacidad de memorizar.</span>
+        </div>
+        <div class="field">
+          <div class="field-head"><label for="in-lr">Velocidad de aprendizaje</label><output id="out-lr">0.3</output></div>
+          <input type="range" id="in-lr" min="0" max="8" step="1" value="5">
+          <span class="hint">El tamaño de cada paso al corregir los pesos.</span>
+        </div>
+        <div class="net-box" id="net-box"><canvas id="cv-net" aria-label="Diagrama de la red"></canvas></div>
+        <span class="hint">Grosor = fuerza de cada conexión. Azul: peso positivo · rojo: negativo.</span>
+      </section>
+
+      <section>
+        <span class="label">Los datos</span>
+        <div class="field">
+          <div class="field-head"><label>Forma del problema</label></div>
+          <div class="seg" id="seg-shape" role="group" aria-label="Forma del problema">
+            <button type="button" data-v="ola" aria-pressed="true">Ola</button>
+            <button type="button" data-v="circulo" aria-pressed="false">Círculo</button>
+            <button type="button" data-v="xor" aria-pressed="false">Cruz</button>
+            <button type="button" data-v="espiral" aria-pressed="false">Espiral</button>
+          </div>
+        </div>
+        <div class="field">
+          <div class="field-head"><label for="in-noise">Ruido en las etiquetas</label><output id="out-noise">5 %</output></div>
+          <input type="range" id="in-noise" min="0" max="40" step="5" value="5">
+          <span class="hint">Porcentaje de puntos con el color equivocado, como errores al anotar datos reales.</span>
+        </div>
+        <div class="field">
+          <div class="field-head"><label for="in-ntrain">Puntos de entrenamiento</label><output id="out-ntrain">150</output></div>
+          <input type="range" id="in-ntrain" min="10" max="400" step="10" value="150">
+          <span class="hint">Además se reservan <strong>150 puntos de prueba</strong> que la red nunca usa para aprender.</span>
+        </div>
+        <button class="btn small" id="btn-data" type="button">Sortear datos nuevos</button>
+        <label class="check"><input type="checkbox" id="chk-test" checked> Mostrar puntos de prueba</label>
+        <label class="check"><input type="checkbox" id="chk-err" checked> Marcar puntos mal clasificados</label>
+      </section>
+    </aside>
+
+    <div class="stage">
+      <div class="stats" aria-live="polite">
+        <div class="stat"><span class="k">Época</span><span class="v" id="st-epoch">0</span></div>
+        <div class="stat"><span class="k">Error entrenamiento</span><span class="v tr" id="st-trl">–</span></div>
+        <div class="stat"><span class="k">Error prueba</span><span class="v te" id="st-tel">–</span></div>
+        <div class="stat"><span class="k">Aciertos entrenamiento</span><span class="v tr" id="st-tra">–</span></div>
+        <div class="stat"><span class="k">Aciertos prueba</span><span class="v te" id="st-tea">–</span></div>
+      </div>
+      <div class="status-row">
+        <span class="pill" id="pill-state">Listo para entrenar</span>
+        <span class="pill warn" id="pill-over" hidden>Señales de sobreajuste</span>
+        <span class="status-msg" id="status-msg">La red empieza con pesos al azar: por ahora adivina.</span>
+      </div>
+
+      <div class="charts">
+        <figure>
+          <figcaption>
+            <span class="t">Cómo clasifica el plano</span>
+            <span class="s">El fondo muestra qué color le daría la red a cada lugar. La línea es la frontera de decisión (50 %).</span>
+          </figcaption>
+          <div class="map-box" id="map-box"><canvas id="cv-map" aria-label="Mapa de clasificación"></canvas></div>
+          <div class="legend">
+            <span><i class="sw red"></i>Clase roja</span>
+            <span><i class="sw blue"></i>Clase azul</span>
+            <span><i class="sw fill"></i>Entrenamiento</span>
+            <span><i class="sw ring"></i>Prueba (no la ve al aprender)</span>
+            <span><i class="sw err"></i>Mal clasificado</span>
+          </div>
+        </figure>
+        <figure>
+          <figcaption>
+            <span class="t">Error a lo largo del entrenamiento</span>
+            <span class="s">Pérdida logarítmica: 0,69 es adivinar al azar; cuanto más baja, mejor.</span>
+          </figcaption>
+          <div class="loss-box" id="loss-box"><canvas id="cv-loss" aria-label="Curva de error"></canvas></div>
+          <div class="legend">
+            <span><i class="ln tr"></i>Entrenamiento</span>
+            <span><i class="ln te"></i>Prueba</span>
+            <span>● mejor momento en prueba</span>
+          </div>
+        </figure>
+      </div>
+    </div>
+  </div>
+
+  <section class="explain">
+    <h2>Qué estás viendo</h2>
+    <div class="explain-grid">
+      <div><h3>Los puntos</h3><p>Cada punto tiene dos números, su posición <strong>x</strong> e <strong>y</strong>, y una respuesta correcta: rojo o azul. Los puntos llenos son los de <strong>entrenamiento</strong>, de los que la red aprende. Los aros son de <strong>prueba</strong>: quedan guardados y solo sirven para ver si lo aprendido funciona con casos nuevos.</p></div>
+      <div><h3>La red</h3><p>Recibe x e y, los pasa por unas neuronas ocultas y devuelve una probabilidad de “azul”. Cada conexión tiene un <strong>peso</strong>. Aprender es ajustar esos pesos poquito a poco para equivocarse menos. Una <strong>época</strong> es una pasada completa por todos los puntos de entrenamiento.</p></div>
+      <div><h3>El mapa</h3><p>Es lo que la red “cree” sobre todo el plano. Donde el fondo es azul fuerte está segura de que es azul; donde es pálido, duda. Al principio el mapa es casi gris porque los pesos son aleatorios.</p></div>
+      <div><h3>La curva de error</h3><p>La línea verde es el error con los datos que estudia; la naranja, con los de prueba. Si las dos bajan, está aprendiendo algo general. Si la verde sigue bajando y la naranja sube, está <strong>memorizando</strong>: eso es el sobreajuste.</p></div>
+    </div>
+  </section>
+
+  <section class="experiments">
+    <h2>Tres experimentos</h2>
+    <div class="exp-grid">
+      <article class="exp">
+        <span class="tag">Experimento 1 · Capacidad</span>
+        <h3>¿Cuántas neuronas hacen falta?</h3>
+        <ol>
+          <li>Prepará el experimento: círculo con <strong>1 neurona</strong>.</li>
+          <li>Mirá la frontera: con una sola neurona solo puede trazar una recta. Los aciertos se estancan cerca de 60–70 %.</li>
+          <li>Sin pausar, subí a 2, 3 y 4 neuronas. Cada cambio reinicia la red.</li>
+        </ol>
+        <p class="q">Los errores de una red demasiado chica son <em>sistemáticos</em>: falla igual en entrenamiento y en prueba. Eso se llama subajuste.</p>
+        <button class="btn small primary" type="button" data-exp="1">Preparar y entrenar</button>
+      </article>
+      <article class="exp">
+        <span class="tag">Experimento 2 · Velocidad</span>
+        <h3>Pasos chicos, medianos y enormes</h3>
+        <ol>
+          <li>Prepará el experimento: ola con velocidad <strong>0.003</strong>. La curva casi no se mueve.</li>
+          <li>Reiniciá con <strong>0.3</strong>: baja rápido y se asienta.</li>
+          <li>Reiniciá con <strong>10</strong>: la curva da saltos bruscos hacia arriba y la frontera tiembla de un lado a otro.</li>
+        </ol>
+        <p class="q">Un paso demasiado grande se pasa del punto óptimo una y otra vez. Uno demasiado chico tarda una eternidad.</p>
+        <button class="btn small primary" type="button" data-exp="2">Preparar y entrenar</button>
+      </article>
+      <article class="exp">
+        <span class="tag">Experimento 3 · Sobreajuste</span>
+        <h3>Pocos datos, mucho ruido, red grande</h3>
+        <ol>
+          <li>Prepará el experimento: círculo con <strong>30 puntos</strong>, <strong>15 % de ruido</strong> y <strong>32 neuronas</strong>.</li>
+          <li>Dejalo correr unas 8.000 épocas. La línea verde baja casi a cero (100 % de aciertos); la naranja baja unos cientos de épocas y después <strong>sube</strong>.</li>
+          <li>Mirá el mapa: la frontera se retuerce para alcanzar puntos mal etiquetados. Repetí con 400 puntos o con 4 neuronas.</li>
+        </ol>
+        <p class="q">El punto ● marca cuándo convenía frenar. Detenerse ahí se llama <em>parada temprana</em>.</p>
+        <button class="btn small primary" type="button" data-exp="3">Preparar y entrenar</button>
+      </article>
+    </div>
+  </section>
+
+  <footer>Todo corre en tu navegador, sin servicios externos: los datos se generan acá y la red se entrena con descenso del gradiente escrito a mano. Las mismas ideas (pesos, error, datos de prueba, sobreajuste) aparecen en modelos mucho más grandes.</footer>
+</div>
+
+<script>
+// CORE-START
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function randn(rng) {
+  let u = 0; while (u === 0) u = rng();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng());
+}
+const SHAPES = {
+  ola: (x, y) => (y > 0.4 * Math.sin(3 * x) ? 1 : 0),
+  circulo: (x, y) => (x * x + y * y < 0.36 ? 1 : 0),
+  xor: (x, y) => (x * y > 0 ? 1 : 0),
+};
+function makePoint(shape, rng) {
+  if (shape === 'espiral') {
+    const label = rng() < 0.5 ? 1 : 0;
+    const t = Math.sqrt(rng());
+    const r = 0.08 + 0.85 * t;
+    const a = t * 3.2 * Math.PI + label * Math.PI;
+    return { x: r * Math.cos(a) + randn(rng) * 0.035, y: r * Math.sin(a) + randn(rng) * 0.035, label };
+  }
+  const x = rng() * 2 - 1, y = rng() * 2 - 1;
+  return { x, y, label: SHAPES[shape](x, y) };
+}
+function genData(shape, n, noise, rng) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const p = makePoint(shape, rng);
+    p.flipped = rng() < noise;
+    if (p.flipped) p.label = 1 - p.label;
+    out.push(p);
+  }
+  return out;
+}
+function createNet(H, rng) {
+  const n = {
+    H, W1: new Float64Array(2 * H), b1: new Float64Array(H), W2: new Float64Array(H), b2: new Float64Array(1),
+    a: new Float64Array(H), gW1: new Float64Array(2 * H), gb1: new Float64Array(H), gW2: new Float64Array(H), gb2: new Float64Array(1),
+  };
+  for (let j = 0; j < H; j++) {
+    n.W1[2 * j] = randn(rng) * 1.2;
+    n.W1[2 * j + 1] = randn(rng) * 1.2;
+    n.b1[j] = randn(rng) * 0.5;
+    n.W2[j] = randn(rng) / Math.sqrt(H);
+  }
+  return n;
+}
+function forward(n, x, y) {
+  let z = n.b2[0];
+  for (let j = 0; j < n.H; j++) {
+    const h = Math.tanh(n.W1[2 * j] * x + n.W1[2 * j + 1] * y + n.b1[j]);
+    n.a[j] = h;
+    z += n.W2[j] * h;
+  }
+  return 1 / (1 + Math.exp(-z));
+}
+function trainEpoch(n, data, lr) {
+  n.gW1.fill(0); n.gb1.fill(0); n.gW2.fill(0); n.gb2[0] = 0;
+  for (const p of data) {
+    const d = forward(n, p.x, p.y) - p.label;
+    n.gb2[0] += d;
+    for (let j = 0; j < n.H; j++) {
+      const a = n.a[j];
+      n.gW2[j] += d * a;
+      const dz = d * n.W2[j] * (1 - a * a);
+      n.gW1[2 * j] += dz * p.x;
+      n.gW1[2 * j + 1] += dz * p.y;
+      n.gb1[j] += dz;
+    }
+  }
+  const k = lr / data.length;
+  for (let i = 0; i < n.W1.length; i++) n.W1[i] -= k * n.gW1[i];
+  for (let j = 0; j < n.H; j++) { n.b1[j] -= k * n.gb1[j]; n.W2[j] -= k * n.gW2[j]; }
+  n.b2[0] -= k * n.gb2[0];
+}
+function evaluate(n, data) {
+  let loss = 0, ok = 0;
+  for (const p of data) {
+    const o = forward(n, p.x, p.y);
+    const q = Math.min(Math.max(o, 1e-7), 1 - 1e-7);
+    loss += p.label ? -Math.log(q) : -Math.log(1 - q);
+    if ((o >= 0.5 ? 1 : 0) === p.label) ok++;
+  }
+  return { loss: loss / data.length, acc: ok / data.length };
+}
+// CORE-END
+
+const LRS = [0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1, 3, 10];
+const N_TEST = 150;
+const MAX_POINTS = 500;
+const $ = (id) => document.getElementById(id);
+
+const S = {
+  shape: 'ola', noise: 0.05, nTrain: 150, hidden: 6, lrIdx: 5, pace: 10,
+  showTest: true, showErr: true,
+  seed: 1234, netSeed: 1, running: false, diverged: false,
+  epoch: 0, every: 1, hist: [], best: null, net: null, train: [], test: [],
+  trainEval: null, testEval: null,
+};
+
+function newData() {
+  const rng = mulberry32(S.seed);
+  S.train = genData(S.shape, S.nTrain, S.noise, rng);
+  S.test = genData(S.shape, N_TEST, S.noise, mulberry32(S.seed * 7 + 99));
+}
+function newNet() {
+  S.netSeed = (S.netSeed * 48271 + 11) % 2147483647;
+  S.net = createNet(S.hidden, mulberry32(S.netSeed));
+  S.epoch = 0; S.every = 1; S.hist = []; S.best = null; S.diverged = false;
+  record();
+}
+function record() {
+  const tr = evaluate(S.net, S.train), te = evaluate(S.net, S.test);
+  S.trainEval = tr; S.testEval = te;
+  if (!isFinite(tr.loss) || !isFinite(te.loss) || !isFinite(S.net.b2[0])) {
+    S.diverged = true; setRunning(false); return;
+  }
+  S.hist.push({ e: S.epoch, tr: tr.loss, te: te.loss });
+  if (!S.best || te.loss < S.best.loss) S.best = { e: S.epoch, loss: te.loss };
+  if (S.hist.length > MAX_POINTS) {
+    S.hist = S.hist.filter((_, i) => i % 2 === 0 || i === S.hist.length - 1);
+    S.every *= 2;
+  }
+}
+
+function step() {
+  const lr = LRS[S.lrIdx];
+  for (let i = 0; i < S.pace && S.running; i++) {
+    trainEpoch(S.net, S.train, lr);
+    S.epoch++;
+    if (S.epoch % S.every === 0) record();
+  }
+  if (S.running && S.epoch % S.every !== 0) {
+    S.trainEval = evaluate(S.net, S.train); S.testEval = evaluate(S.net, S.test);
+  }
+}
+function loop() {
+  if (!S.running) return;
+  step();
+  renderAll();
+  requestAnimationFrame(loop);
+}
+function setRunning(on) {
+  const was = S.running;
+  S.running = on && !S.diverged;
+  $('btn-train').disabled = S.running;
+  $('btn-pause').disabled = !S.running;
+  if (S.running && !was) requestAnimationFrame(loop);
+  renderStatus();
+}
+
+// ---------- colores y canvas ----------
+let C = {};
+function readColors() {
+  const cs = getComputedStyle(document.documentElement);
+  const get = (k) => cs.getPropertyValue(k).trim();
+  C = { red: get('--red'), blue: get('--blue'), surface: get('--surface'), fg: get('--fg'), muted: get('--muted'),
+        line: get('--line'), accent: get('--accent'), amber: get('--amber'), sunken: get('--sunken') };
+  C.redRgb = hexRgb(C.red); C.blueRgb = hexRgb(C.blue); C.surfRgb = hexRgb(C.surface);
+}
+function hexRgb(h) {
+  h = h.replace('#', '');
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  const n = parseInt(h, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function fit(cv, w, h) {
+  const dpr = window.devicePixelRatio || 1;
+  const W = Math.max(1, Math.round(w * dpr)), Hh = Math.max(1, Math.round(h * dpr));
+  if (cv.width !== W || cv.height !== Hh) { cv.width = W; cv.height = Hh; }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+
+const G = 64;
+const off = document.createElement('canvas'); off.width = G; off.height = G;
+const offCtx = off.getContext('2d');
+const img = offCtx.createImageData(G, G);
+const grid = new Float64Array((G + 1) * (G + 1));
+
+function renderMap() {
+  const box = $('map-box');
+  const w = box.clientWidth, h = box.clientHeight;
+  if (!w || !h) return;
+  const ctx = fit($('cv-map'), w, h);
+  const net = S.net;
+  for (let gy = 0; gy <= G; gy++) for (let gx = 0; gx <= G; gx++) {
+    grid[gy * (G + 1) + gx] = forward(net, -1 + 2 * gx / G, 1 - 2 * gy / G);
+  }
+  for (let py = 0; py < G; py++) for (let px = 0; px < G; px++) {
+    const p = forward(net, -1 + 2 * (px + 0.5) / G, 1 - 2 * (py + 0.5) / G);
+    const c = p >= 0.5 ? C.blueRgb : C.redRgb;
+    const t = Math.min(1, Math.abs(p - 0.5) * 2) * 0.55;
+    const i = (py * G + px) * 4;
+    img.data[i] = C.surfRgb[0] + (c[0] - C.surfRgb[0]) * t;
+    img.data[i + 1] = C.surfRgb[1] + (c[1] - C.surfRgb[1]) * t;
+    img.data[i + 2] = C.surfRgb[2] + (c[2] - C.surfRgb[2]) * t;
+    img.data[i + 3] = 255;
+  }
+  offCtx.putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(off, 0, 0, w, h);
+
+  ctx.strokeStyle = C.line; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(w / 2, 0); ctx.lineTo(w / 2, h); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
+
+  // frontera p = 0.5 con marching squares
+  const cw = w / G, ch = h / G;
+  ctx.strokeStyle = C.fg; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  for (let gy = 0; gy < G; gy++) for (let gx = 0; gx < G; gx++) {
+    const v0 = grid[gy * (G + 1) + gx] - 0.5, v1 = grid[gy * (G + 1) + gx + 1] - 0.5;
+    const v2 = grid[(gy + 1) * (G + 1) + gx + 1] - 0.5, v3 = grid[(gy + 1) * (G + 1) + gx] - 0.5;
+    const pts = [];
+    const x0 = gx * cw, y0 = gy * ch;
+    if ((v0 > 0) !== (v1 > 0)) pts.push([x0 + cw * v0 / (v0 - v1), y0]);
+    if ((v1 > 0) !== (v2 > 0)) pts.push([x0 + cw, y0 + ch * v1 / (v1 - v2)]);
+    if ((v3 > 0) !== (v2 > 0)) pts.push([x0 + cw * v3 / (v3 - v2), y0 + ch]);
+    if ((v0 > 0) !== (v3 > 0)) pts.push([x0, y0 + ch * v0 / (v0 - v3)]);
+    for (let k = 0; k + 1 < pts.length; k += 2) { ctx.moveTo(pts[k][0], pts[k][1]); ctx.lineTo(pts[k + 1][0], pts[k + 1][1]); }
+  }
+  ctx.stroke();
+
+  const r = Math.max(3.5, Math.min(5.5, w / 95));
+  const sx = (x) => (x + 1) / 2 * w, sy = (y) => (1 - y) / 2 * h;
+  const drawPts = (data, isTest) => {
+    for (const p of data) {
+      const X = sx(p.x), Y = sy(p.y), col = p.label ? C.blue : C.red;
+      ctx.beginPath(); ctx.arc(X, Y, r, 0, Math.PI * 2);
+      if (isTest) { ctx.fillStyle = C.surface; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = col; ctx.stroke(); }
+      else { ctx.fillStyle = col; ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = C.surface; ctx.stroke(); }
+      if (S.showErr && ((forward(S.net, p.x, p.y) >= 0.5 ? 1 : 0) !== p.label)) {
+        ctx.beginPath(); ctx.arc(X, Y, r + 3.2, 0, Math.PI * 2);
+        ctx.lineWidth = 1.5; ctx.strokeStyle = C.fg; ctx.stroke();
+      }
+    }
+  };
+  drawPts(S.train, false);
+  if (S.showTest) drawPts(S.test, true);
+}
+
+function niceStep(raw) {
+  const p = Math.pow(10, Math.floor(Math.log10(raw)));
+  const m = raw / p;
+  return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p;
+}
+function fmtNum(v) {
+  if (v >= 1000) return (v / 1000).toLocaleString('es-AR', { maximumFractionDigits: 1 }) + ' k';
+  return v.toLocaleString('es-AR', { maximumFractionDigits: 2 });
+}
+function renderLoss() {
+  const box = $('loss-box');
+  const w = box.clientWidth, h = box.clientHeight;
+  if (!w || !h) return;
+  const ctx = fit($('cv-loss'), w, h);
+  ctx.clearRect(0, 0, w, h);
+  const L = 46, R = 14, T = 12, B = 30;
+  const pw = w - L - R, ph = h - T - B;
+  const H = S.hist;
+  const maxE = Math.max(10, S.epoch);
+  let maxY = 0.8;
+  for (const d of H) maxY = Math.max(maxY, Math.min(2, Math.max(d.tr, d.te)));
+  const yStep = niceStep(maxY / 4);
+  maxY = Math.ceil(maxY / yStep) * yStep;
+  const xStep = niceStep(maxE / 5);
+  const X = (e) => L + e / maxE * pw, Y = (v) => T + (1 - Math.min(v, maxY) / maxY) * ph;
+
+  ctx.font = '500 11px ' + getComputedStyle(document.documentElement).getPropertyValue('--font-mono');
+  ctx.lineWidth = 1;
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let v = 0; v <= maxY + 1e-9; v += yStep) {
+    ctx.strokeStyle = C.line; ctx.beginPath(); ctx.moveTo(L, Y(v)); ctx.lineTo(L + pw, Y(v)); ctx.stroke();
+    ctx.fillStyle = C.muted; ctx.fillText(fmtNum(v), L - 8, Y(v));
+  }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (let e = 0; e <= maxE + 1e-9; e += xStep) {
+    ctx.fillStyle = C.muted; ctx.fillText(fmtNum(e), X(e), T + ph + 8);
+  }
+  // referencia de azar
+  if (Math.log(2) < maxY) {
+    ctx.setLineDash([3, 4]); ctx.strokeStyle = C.muted;
+    ctx.beginPath(); ctx.moveTo(L, Y(Math.log(2))); ctx.lineTo(L + pw, Y(Math.log(2))); ctx.stroke(); ctx.setLineDash([]);
+    ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillStyle = C.muted;
+    ctx.fillText('azar', L + pw - 2, Y(Math.log(2)) - 3);
+  }
+  if (H.length < 1) return;
+
+  const line = (key, color) => {
+    ctx.strokeStyle = color; ctx.lineWidth = 2.2; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    H.forEach((d, i) => { const x = X(d.e), y = Y(d[key]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.stroke();
+    const last = H[H.length - 1];
+    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(X(last.e), Y(last[key]), 3.5, 0, Math.PI * 2); ctx.fill();
+  };
+  line('tr', C.accent);
+  line('te', C.amber);
+
+  if (S.best && S.epoch > 0) {
+    const bx = X(S.best.e), by = Y(S.best.loss);
+    ctx.setLineDash([2, 3]); ctx.strokeStyle = C.amber; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx, T + ph); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = C.surface; ctx.strokeStyle = C.amber; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(bx, by, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+}
+
+function renderNet() {
+  const box = $('net-box');
+  const w = box.clientWidth;
+  if (!w) return;
+  const n = S.net, Hn = n.H;
+  const gap = Hn > 16 ? 7 : Hn > 8 ? 11 : 18;
+  const h = Math.max(110, Hn * gap + 24);
+  box.style.height = h + 'px';
+  const ctx = fit($('cv-net'), w, h);
+  ctx.clearRect(0, 0, w, h);
+  const xi = 26, xh = w / 2, xo = w - 26;
+  const yIn = [h / 2 - 22, h / 2 + 22];
+  const yH = Array.from({ length: Hn }, (_, j) => Hn === 1 ? h / 2 : 12 + j * (h - 24) / (Hn - 1));
+  let maxW = 1e-6;
+  for (const v of n.W1) maxW = Math.max(maxW, Math.abs(v));
+  for (const v of n.W2) maxW = Math.max(maxW, Math.abs(v));
+  const edge = (x1, y1, x2, y2, wt) => {
+    ctx.strokeStyle = wt >= 0 ? C.blue : C.red;
+    ctx.globalAlpha = 0.25 + 0.65 * Math.abs(wt) / maxW;
+    ctx.lineWidth = 0.5 + 3 * Math.abs(wt) / maxW;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  };
+  for (let j = 0; j < Hn; j++) {
+    edge(xi, yIn[0], xh, yH[j], n.W1[2 * j]);
+    edge(xi, yIn[1], xh, yH[j], n.W1[2 * j + 1]);
+    edge(xh, yH[j], xo, h / 2, n.W2[j]);
+  }
+  ctx.globalAlpha = 1;
+  const node = (x, y, r, label) => {
+    ctx.fillStyle = C.surface; ctx.strokeStyle = C.fg; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    if (label) { ctx.fillStyle = C.fg; ctx.font = '600 11px ' + getComputedStyle(document.documentElement).getPropertyValue('--font-mono'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(label, x, y + 0.5); }
+  };
+  node(xi, yIn[0], 10, 'x'); node(xi, yIn[1], 10, 'y');
+  const rh = Math.min(6, gap / 2 - 0.5);
+  for (let j = 0; j < Hn; j++) node(xh, yH[j], rh);
+  node(xo, h / 2, 10, 'p');
+}
+
+const pct = (v) => (v * 100).toLocaleString('es-AR', { maximumFractionDigits: 1 }) + ' %';
+const f3 = (v) => v.toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+
+function renderStats() {
+  $('st-epoch').textContent = S.epoch.toLocaleString('es-AR');
+  if (S.trainEval && isFinite(S.trainEval.loss)) {
+    $('st-trl').textContent = f3(S.trainEval.loss);
+    $('st-tel').textContent = f3(S.testEval.loss);
+    $('st-tra').textContent = pct(S.trainEval.acc);
+    $('st-tea').textContent = pct(S.testEval.acc);
+  }
+}
+function renderStatus() {
+  const pill = $('pill-state'), msg = $('status-msg'), over = $('pill-over');
+  pill.className = 'pill';
+  let overfit = false;
+  if (S.best && S.testEval && S.epoch > 200) {
+    overfit = S.testEval.loss > S.best.loss * 1.12 + 0.01 && S.best.e < S.epoch * 0.85 && S.trainEval.loss < S.testEval.loss;
+  }
+  over.hidden = !overfit;
+  if (S.diverged) {
+    pill.textContent = 'Inestable'; pill.classList.add('bad');
+    msg.textContent = 'Los pesos explotaron: la velocidad de aprendizaje es demasiado alta. Bajala y apretá Reiniciar.';
+    return;
+  }
+  if (S.running) { pill.textContent = 'Aprendiendo'; pill.classList.add('ok'); }
+  else if (S.epoch === 0) pill.textContent = 'Listo para entrenar';
+  else pill.textContent = 'En pausa';
+
+  if (S.epoch === 0) msg.textContent = 'La red empieza con pesos al azar: por ahora adivina.';
+  else if (overfit) msg.textContent = `El error de prueba era menor en la época ${S.best.e.toLocaleString('es-AR')}. Desde ahí la red memoriza el entrenamiento en vez de generalizar.`;
+  else if (S.trainEval.acc < 0.75 && S.epoch > 1500) msg.textContent = 'El error se estancó alto. ¿Le faltan neuronas o el paso es muy chico o muy grande?';
+  else msg.textContent = `Diferencia entre prueba y entrenamiento: ${f3(Math.max(0, S.testEval.loss - S.trainEval.loss))}. Mientras sea chica, está generalizando.`;
+}
+function renderAll() {
+  renderMap(); renderLoss(); renderNet(); renderStats(); renderStatus();
+}
+
+// ---------- controles ----------
+function syncControls() {
+  $('in-hidden').value = S.hidden; $('out-hidden').textContent = S.hidden;
+  $('in-lr').value = S.lrIdx; $('out-lr').textContent = LRS[S.lrIdx];
+  $('in-noise').value = Math.round(S.noise * 100); $('out-noise').textContent = Math.round(S.noise * 100) + ' %';
+  $('in-ntrain').value = S.nTrain; $('out-ntrain').textContent = S.nTrain;
+  for (const b of $('seg-pace').children) b.setAttribute('aria-pressed', String(+b.dataset.v === S.pace));
+  for (const b of $('seg-shape').children) b.setAttribute('aria-pressed', String(b.dataset.v === S.shape));
+}
+function rebuild(data) {
+  if (data) newData();
+  newNet();
+  if (!S.running) setRunning(false);
+  renderAll();
+}
+
+$('btn-train').addEventListener('click', () => { if (S.diverged) return; setRunning(true); });
+$('btn-pause').addEventListener('click', () => { setRunning(false); renderAll(); });
+$('btn-reset').addEventListener('click', () => { S.diverged = false; setRunning(false); rebuild(false); });
+$('btn-data').addEventListener('click', () => { S.seed = Math.floor(Math.random() * 1e9); S.diverged = false; rebuild(true); });
+
+$('in-hidden').addEventListener('input', (e) => { S.hidden = +e.target.value; $('out-hidden').textContent = S.hidden; S.diverged = false; rebuild(false); });
+$('in-lr').addEventListener('input', (e) => { S.lrIdx = +e.target.value; $('out-lr').textContent = LRS[S.lrIdx]; });
+$('in-noise').addEventListener('input', (e) => { S.noise = +e.target.value / 100; $('out-noise').textContent = e.target.value + ' %'; S.diverged = false; rebuild(true); });
+$('in-ntrain').addEventListener('input', (e) => { S.nTrain = +e.target.value; $('out-ntrain').textContent = S.nTrain; S.diverged = false; rebuild(true); });
+$('seg-pace').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; S.pace = +b.dataset.v; syncControls(); });
+$('seg-shape').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; S.shape = b.dataset.v; syncControls(); S.diverged = false; rebuild(true); });
+$('chk-test').addEventListener('change', (e) => { S.showTest = e.target.checked; renderMap(); });
+$('chk-err').addEventListener('change', (e) => { S.showErr = e.target.checked; renderMap(); });
+
+const EXPERIMENTS = {
+  1: { shape: 'circulo', noise: 0.05, nTrain: 150, hidden: 1, lrIdx: 5, pace: 10, seed: 2024 },
+  2: { shape: 'ola', noise: 0.05, nTrain: 150, hidden: 32, lrIdx: 1, pace: 10, seed: 77 },
+  3: { shape: 'circulo', noise: 0.15, nTrain: 30, hidden: 32, lrIdx: 5, pace: 10, seed: 8 },
+};
+document.querySelectorAll('[data-exp]').forEach((b) => b.addEventListener('click', () => {
+  Object.assign(S, EXPERIMENTS[b.dataset.exp]);
+  S.diverged = false;
+  setRunning(false);
+  syncControls();
+  rebuild(true);
+  document.querySelector('.lab').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  setRunning(true);
+}));
+
+const refreshTheme = () => { readColors(); renderAll(); };
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refreshTheme);
+new MutationObserver(refreshTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+new ResizeObserver(() => { if (!S.running) renderAll(); }).observe(document.querySelector('.lab'));
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => renderAll());
+
+readColors();
+syncControls();
+newData();
+newNet();
+renderAll();
+</script>

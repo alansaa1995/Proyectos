@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Robot, llave y puerta</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: tablero y controles a la izquierda, el último paso a la derecha; debajo los dos mapas de decisiones (sin llave / con llave), la comparación de una casilla, el gráfico y la guía */
+:root {
+  --bg: #f1f3f6;
+  --surface: #ffffff;
+  --sunken: #e6eaf0;
+  --ink: #1b2130;
+  --muted: #5a6478;
+  --line: #d4dae4;
+  --wall: #394152;
+  --good: #22834b;
+  --good-soft: #dcf0e3;
+  --bad: #c43d2c;
+  --nokey: #6b5bd2;
+  --nokey-soft: #e7e3fb;
+  --key: #c98a00;
+  --key-soft: #fbefcf;
+  --explore: #b8650a;
+  --explore-soft: #fbead3;
+  --exploit: #2b62c4;
+  --exploit-soft: #dde8fb;
+  --neutral: #8b93a3;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  --font-body: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-num: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  --radius: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10131b; --surface: #191e2a; --sunken: #232937; --ink: #e8ecf4; --muted: #a0a9bc; --line: #2f3646;
+    --wall: #4b5468; --good: #4cc77c; --good-soft: #163525; --bad: #ff7a68; --nokey: #a497ff; --nokey-soft: #2a2550;
+    --key: #ffc94a; --key-soft: #3b3014; --explore: #f2a24a; --explore-soft: #3d2b14; --exploit: #78a6ff; --exploit-soft: #1b2a47; --neutral: #7a8396;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10131b; --surface: #191e2a; --sunken: #232937; --ink: #e8ecf4; --muted: #a0a9bc; --line: #2f3646;
+  --wall: #4b5468; --good: #4cc77c; --good-soft: #163525; --bad: #ff7a68; --nokey: #a497ff; --nokey-soft: #2a2550;
+  --key: #ffc94a; --key-soft: #3b3014; --explore: #f2a24a; --explore-soft: #3d2b14; --exploit: #78a6ff; --exploit-soft: #1b2a47; --neutral: #7a8396;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 48px;
+}
+.wrap { max-width: 1140px; margin: 0 auto; display: grid; gap: 20px; }
+h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(1.9rem, 5vw, 2.6rem); line-height: 1.05; font-weight: 800; letter-spacing: -0.015em; }
+h2 { font-size: 1.22rem; font-weight: 750; }
+h3 { font-size: 1rem; font-weight: 700; }
+p { margin: 0; }
+header { display: grid; gap: 8px; }
+.eyebrow { font-size: 0.76rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--nokey); }
+.lede { color: var(--muted); max-width: 68ch; font-size: 1.04rem; }
+.lede b { color: var(--ink); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.hint { font-size: 0.84rem; color: var(--muted); }
+.head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.idx { font-family: var(--font-num); font-size: 0.85rem; color: var(--muted); }
+
+.main { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .main { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; } }
+.col { display: grid; gap: 14px; min-width: 0; }
+
+/* Estado sin llave / con llave */
+.badge { display: inline-flex; align-items: center; gap: 6px; font-weight: 750; font-size: 0.95rem; padding: 4px 12px; border-radius: 999px; }
+.badge.nokey { background: var(--nokey-soft); color: var(--nokey); }
+.badge.haskey { background: var(--key-soft); color: var(--key); }
+
+/* Tableros */
+.board-card { padding: 14px; display: grid; gap: 10px; }
+.frame { display: grid; grid-template-columns: 1.3em minmax(0, 1fr); grid-template-rows: 1.3em auto; gap: 3px; width: 100%; justify-self: center; }
+.frame.big { max-width: 440px; }
+.cols { grid-column: 2; display: grid; grid-template-columns: repeat(5, 1fr); text-align: center; font-size: 0.74rem; color: var(--muted); font-weight: 600; }
+.rows { grid-row: 2; display: grid; grid-template-rows: repeat(5, 1fr); align-items: center; text-align: center; font-size: 0.74rem; color: var(--muted); font-weight: 600; }
+.board { grid-column: 2; grid-row: 2; position: relative; display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(5, 1fr); gap: 4px; aspect-ratio: 1; max-width: 100%; }
+.cell {
+  position: relative; border-radius: 8px; background: var(--sunken); border: 2px solid transparent; overflow: hidden;
+  display: grid; place-items: center; padding: 0; font: inherit; color: var(--ink); cursor: pointer; min-width: 0;
+}
+.cell.wall { background: var(--wall); cursor: default; }
+.cell .icon { font-size: clamp(1.3rem, 6vw, 2rem); line-height: 1; }
+.cell .icon.faded { opacity: 0.22; }
+.cell .lock { position: absolute; right: 3px; bottom: 2px; font-size: 0.8rem; }
+.cell .tag { position: absolute; top: 2px; left: 4px; font-size: 0.6rem; font-weight: 700; color: var(--muted); text-transform: uppercase; }
+.cell.sel { border-color: var(--ink); }
+.cell.door { background: color-mix(in srgb, var(--good) 16%, var(--surface)); }
+.cell.keycell { background: var(--key-soft); }
+.bot {
+  position: absolute; left: 0; top: 0; width: calc((100% - 16px) / 5); height: calc((100% - 16px) / 5);
+  display: grid; place-items: center; pointer-events: none; transition: transform 0.16s ease; z-index: 2;
+  font-size: clamp(1.5rem, 7vw, 2.3rem); filter: drop-shadow(0 2px 2px rgba(0,0,0,0.25));
+}
+.bot .carry { position: absolute; right: 6%; bottom: 4%; font-size: 0.45em; }
+@media (prefers-reduced-motion: reduce) { .bot { transition: none; } }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.82rem; color: var(--muted); justify-content: center; }
+
+/* Mapas de flechas */
+.maps-card { padding: 16px; display: grid; gap: 14px; }
+.maps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.map { display: grid; gap: 8px; min-width: 0; padding: 10px; border-radius: 12px; border: 2px solid transparent; }
+.map.nokey { background: var(--nokey-soft); }
+.map.haskey { background: var(--key-soft); }
+.map.current { border-color: currentColor; }
+.map.nokey.current { color: var(--nokey); }
+.map.haskey.current { color: var(--key); }
+.map h3 { display: flex; justify-content: space-between; gap: 6px; flex-wrap: wrap; align-items: baseline; }
+.map .now { font-size: 0.74rem; font-weight: 700; }
+.map .frame { color: var(--ink); }
+.map .cell { background: var(--surface); }
+.map .cell.wall { background: var(--wall); }
+.map .cell .tint { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+.map .cell .arrow { position: relative; font-size: clamp(0.9rem, 3.8vw, 1.45rem); font-weight: 700; line-height: 1; }
+.map .cell .arrow.none { color: var(--neutral); }
+.map .cell .val { position: absolute; bottom: 1px; left: 0; right: 0; text-align: center; font-family: var(--font-num); font-size: clamp(0.5rem, 1.7vw, 0.64rem); color: var(--muted); }
+.map .cell .icon { font-size: clamp(0.9rem, 3.8vw, 1.4rem); }
+.map .cell.here::after { content: ""; position: absolute; top: 3px; right: 3px; width: 8px; height: 8px; border-radius: 50%; background: var(--exploit); }
+@media (max-width: 520px) { .map .cell .val { display: none; } .maps { gap: 8px; } .map { padding: 6px; } }
+
+/* Comparación */
+.compare { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 560px) { .compare { grid-template-columns: minmax(0, 1fr); } }
+.cmp { display: grid; gap: 8px; min-width: 0; }
+.compass { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-areas: ". up ." "left center right" ". down ."; gap: 5px; }
+.cq { border: 2px solid var(--line); border-radius: 10px; padding: 5px 3px; text-align: center; display: grid; background: var(--surface); min-width: 0; }
+.cq .ar { font-size: 1.1rem; line-height: 1.1; font-weight: 700; }
+.cq .nm { font-size: 0.7rem; color: var(--muted); }
+.cq .qv { font-family: var(--font-num); font-weight: 600; font-size: 0.92rem; }
+.cq .ch { font-family: var(--font-num); font-size: 0.66rem; color: var(--muted); }
+.cq.best { border-color: var(--good); }
+.cq.changed { background: var(--explore-soft); }
+.cq.up { grid-area: up; } .cq.left { grid-area: left; } .cq.right { grid-area: right; } .cq.down { grid-area: down; }
+.cq.center { grid-area: center; border: 0; display: grid; place-items: center; font-weight: 700; font-size: 0.85rem; }
+.cmp.nokey .cq.center { background: var(--nokey-soft); color: var(--nokey); }
+.cmp.haskey .cq.center { background: var(--key-soft); color: var(--key); }
+.verdict { background: var(--sunken); border-radius: 10px; padding: 10px 12px; font-size: 0.95rem; }
+.verdict b { color: var(--ink); }
+
+/* Controles */
+.controls { padding: 14px; display: grid; gap: 12px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn { font: inherit; font-weight: 650; font-size: 0.95rem; cursor: pointer; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--sunken); color: var(--ink); }
+.btn:hover:not(:disabled) { border-color: var(--muted); }
+.btn.primary { background: var(--good); border-color: var(--good); color: var(--surface); }
+.btn.test { background: var(--exploit); border-color: var(--exploit); color: var(--surface); }
+.btn.danger { background: transparent; color: var(--bad); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+:focus-visible { outline: 3px solid var(--key); outline-offset: 2px; }
+.speed { display: grid; gap: 2px; }
+.speed-head { display: flex; justify-content: space-between; font-size: 0.9rem; }
+.speed-head output { font-family: var(--font-num); font-size: 0.85rem; }
+input[type="range"] { width: 100%; accent-color: var(--good); }
+.statusline { font-size: 0.9rem; color: var(--muted); min-height: 1.5em; }
+.statusline b { color: var(--ink); }
+.stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+@media (max-width: 560px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .stats .stat:last-child { grid-column: 1 / -1; } }
+.stat { background: var(--surface); padding: 8px 10px; display: grid; }
+.stat .k { font-size: 0.74rem; color: var(--muted); }
+.stat .v { font-family: var(--font-num); font-size: 1.05rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Paso */
+.step { padding: 16px; display: grid; gap: 12px; }
+.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; font-size: 0.95rem; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; font-weight: 600; min-width: 0; }
+.pill { display: inline-block; font-size: 0.8rem; font-weight: 700; padding: 1px 9px; border-radius: 999px; }
+.pill.explore { background: var(--explore-soft); color: var(--explore); }
+.pill.exploit { background: var(--exploit-soft); color: var(--exploit); }
+.pill.nokey { background: var(--nokey-soft); color: var(--nokey); }
+.pill.haskey { background: var(--key-soft); color: var(--key); }
+.pos { color: var(--good); } .neg { color: var(--bad); }
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.formula { font-family: var(--font-num); font-size: 0.8rem; background: var(--sunken); border-radius: 8px; padding: 8px 10px; overflow-x: auto; white-space: nowrap; }
+.explain { background: var(--good-soft); border-radius: 10px; padding: 10px 12px; font-size: 0.95rem; display: grid; gap: 6px; }
+.recent { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; font-size: 0.8rem; font-family: var(--font-num); color: var(--muted); }
+.recent li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent li:first-child { color: var(--ink); }
+.empty { color: var(--muted); font-size: 0.94rem; }
+
+/* Gráfico */
+.chart-card { padding: 16px; display: grid; gap: 10px; }
+.chart-box { width: 100%; height: 230px; }
+canvas { display: block; width: 100%; height: 100%; }
+.legend2 { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.84rem; color: var(--muted); }
+.legend2 span { display: inline-flex; gap: 6px; align-items: center; }
+.sq { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.sq.ok { background: var(--good); } .sq.fk { background: var(--key); } .sq.fn { background: var(--neutral); }
+
+/* Guía */
+.learn { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.learn .card { padding: 16px; display: grid; gap: 8px; align-content: start; }
+.learn p, .learn li { color: var(--muted); font-size: 0.95rem; }
+.learn b { color: var(--ink); }
+.learn ul { margin: 0; padding-left: 20px; display: grid; gap: 5px; }
+footer { font-size: 0.86rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Aprendizaje por refuerzo · Q-learning con dos situaciones</span>
+    <h1>Robot, llave y puerta</h1>
+    <p class="lede">El robot tiene que <b>buscar la llave</b> y después <b>salir por la puerta</b>. Lo interesante: en la misma casilla le conviene hacer cosas distintas según si ya tiene la llave o no. Por eso aprende <b>dos mapas de decisiones</b>.</p>
+  </header>
+
+  <div class="main">
+    <div class="col">
+      <section class="board-card card" aria-label="Tablero">
+        <div class="head"><h2>Tablero</h2><span class="badge nokey" id="badge">🔒 Sin llave</span></div>
+        <div class="frame big">
+          <div class="cols"><span>A</span><span>B</span><span>C</span><span>D</span><span>E</span></div>
+          <div class="rows"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span></div>
+          <div class="board" id="board"><div class="bot" id="bot" aria-hidden="true">🤖<span class="carry" id="carry"></span></div></div>
+        </div>
+        <div class="legend"><span>🔑 llave +3 (una vez)</span><span>🚪 puerta +10 con llave</span><span>pared, borde o puerta cerrada −1</span><span>paso −0,1</span></div>
+      </section>
+
+      <section class="controls card" aria-label="Controles">
+        <div class="row">
+          <button class="btn" type="button" id="btn-step">Un paso</button>
+          <button class="btn primary" type="button" id="btn-auto">Entrenar automáticamente</button>
+          <button class="btn" type="button" id="btn-batch">Entrenar 100 intentos</button>
+        </div>
+        <div class="speed">
+          <div class="speed-head"><label for="in-speed">Velocidad</label><output id="out-speed">4 pasos por segundo</output></div>
+          <input type="range" id="in-speed" min="0" max="6" step="1" value="2">
+        </div>
+        <div class="row">
+          <button class="btn test" type="button" id="btn-test">Probar lo aprendido</button>
+          <button class="btn danger" type="button" id="btn-reset">Borrar aprendizaje</button>
+        </div>
+        <p class="statusline" id="status" aria-live="polite">Listo. Los 200 valores Q están en cero: el robot todavía no sabe nada.</p>
+        <div class="stats">
+          <div class="stat"><span class="k">Intentos completados</span><span class="v" id="st-eps">0</span></div>
+          <div class="stat"><span class="k">Salidas exitosas</span><span class="v" id="st-ok">0</span></div>
+          <div class="stat"><span class="k">Intentos con llave</span><span class="v" id="st-key">0</span></div>
+          <div class="stat"><span class="k">Paso del intento</span><span class="v" id="st-step">0</span></div>
+          <div class="stat"><span class="k">Exploración ε</span><span class="v" id="st-epsv">1,00</span></div>
+        </div>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="step card" aria-label="Último paso">
+        <div class="head"><h2>Qué pasó en este paso</h2><span class="idx" id="step-idx"></span></div>
+        <div id="step-body"></div>
+        <ol class="recent" id="recent" aria-label="Pasos recientes"></ol>
+      </section>
+    </div>
+  </div>
+
+  <section class="maps-card card" aria-label="Decisiones aprendidas">
+    <div class="head"><h2>Lo que aprendió: dos mapas de decisiones</h2></div>
+    <p class="hint">Cada flecha es la dirección con mayor valor Q en esa casilla. “·” = todavía no prefiere ninguna. El punto azul marca dónde está el robot y el mapa con borde es el que está usando ahora. Tocá una casilla para comparar.</p>
+    <div class="maps">
+      <div class="map nokey" id="map-0"><h3><span>🔒 Sin llave</span><span class="now" id="now-0"></span></h3>
+        <div class="frame"><div class="cols"><span>A</span><span>B</span><span>C</span><span>D</span><span>E</span></div><div class="rows"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span></div><div class="board" id="mboard-0"></div></div>
+      </div>
+      <div class="map haskey" id="map-1"><h3><span>🔑 Con llave</span><span class="now" id="now-1"></span></h3>
+        <div class="frame"><div class="cols"><span>A</span><span>B</span><span>C</span><span>D</span><span>E</span></div><div class="rows"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span></div><div class="board" id="mboard-1"></div></div>
+      </div>
+    </div>
+    <div class="head"><h2>Comparar la casilla <span id="cmp-cell">A1</span></h2></div>
+    <div class="compare" id="compare"></div>
+    <p class="verdict" id="cmp-verdict"></p>
+    <p class="hint">Los valores Q estiman cuánta recompensa total espera juntar el robot si desde esta casilla va en esa dirección y después sigue haciendo lo que mejor sabe. No son porcentajes ni confianza: pueden ser negativos o mayores que 1. Borde verde = mejor dirección. Fondo naranja = el valor que cambió en el último paso.</p>
+  </section>
+
+  <section class="chart-card card" aria-label="Movimientos por intento">
+    <div class="head"><h2>Movimientos por intento</h2><span class="idx" id="chart-sum"></span></div>
+    <div class="chart-box" id="chart-box"><canvas id="chart"></canvas></div>
+    <div class="legend2">
+      <span><i class="sq ok"></i>Salió por la puerta</span>
+      <span><i class="sq fk"></i>Falló: llegó a 100 con la llave</span>
+      <span><i class="sq fn"></i>Falló: llegó a 100 sin la llave</span>
+    </div>
+    <p class="hint">Cada barra es un intento de entrenamiento real, en orden. Las pruebas no se cuentan acá.</p>
+  </section>
+
+  <section class="learn">
+    <div class="card">
+      <h3>Por qué el estado tiene dos partes</h3>
+      <p>Si el robot solo recordara su casilla, en A2 no sabría si le conviene bajar hacia la puerta o subir a buscar la llave. Por eso el estado es <b>casilla + si tiene la llave</b>.</p>
+      <p>La tabla tiene <b>25 casillas × 2 situaciones × 4 direcciones = 200 valores</b>. No hay red neuronal: es una tabla.</p>
+      <p>Cuando recoge la llave cambia de situación. Desde ese momento usa y actualiza los valores del mapa “con llave”.</p>
+    </div>
+    <div class="card">
+      <h3>Qué son los valores Q y la regla</h3>
+      <p>Un valor Q <b>estima recompensa futura</b>: cuánto espera ganar en total si toma esa dirección y después sigue lo mejor que sabe. <b>No es un porcentaje de confianza.</b></p>
+      <p><b>objetivo = recompensa + 0,9 × mejor valor del estado siguiente</b><br><b>Q nuevo = Q viejo + 0,5 × (objetivo − Q viejo)</b></p>
+      <p>Al abrir la puerta el intento termina y no se suma valor futuro. La exploración ε empieza en 1 y se multiplica por 0,98 al terminar cada intento, hasta un mínimo de 0,05. Los empates se sortean.</p>
+    </div>
+    <div class="card">
+      <h3>Qué observar antes de entrenar</h3>
+      <ul>
+        <li>Los dos mapas muestran “·” en todas las casillas.</li>
+        <li>Con <b>Un paso</b> solo cambia un valor por vez, y solo en el mapa de la situación en que estaba el robot.</li>
+        <li>Si intenta entrar a la puerta sin llave, choca: −1, y en el mapa “sin llave” esa dirección baja.</li>
+        <li>El mapa “con llave” no cambia hasta que el robot recoge la llave por primera vez.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Qué observar después de entrenar</h3>
+      <ul>
+        <li>Seleccioná <b>A2</b>: sin llave suele apuntar ↑ (el camino corto a la llave sale por arriba); con llave apunta ↓, a la puerta.</li>
+        <li>Seleccioná <b>A4</b>: sin llave suele apuntar → (hacia la llave por abajo); con llave, ↓ a la puerta. <b>C2</b> también cambia.</li>
+        <li><b>A3</b> es un caso curioso: sin llave hay dos caminos igual de largos a la llave (por arriba y por abajo), así que puede preferir cualquiera de los dos.</li>
+        <li>Las barras del gráfico bajan y se vuelven verdes. No todas: con ε mínimo de 0,05 a veces sigue explorando.</li>
+        <li><b>Probar lo aprendido</b> sale del inicio sin llave y sin explorar, y comprueba que los 200 valores quedaron iguales.</li>
+        <li>Casillas que visitó poco pueden tener flechas raras: ahí tiene pocos datos.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>Funciona sin internet ni servicios externos. Cada número de esta página sale del entrenamiento que corre en tu navegador; no hay rutas precalculadas.</footer>
+</div>
+
+<script>
+// CORE-START
+const MAP = [
+  'S..#K',
+  '.#...',
+  '.#.#.',
+  '...#.',
+  'D....',
+];
+const N = 5;
+const ACTIONS = [
+  { n: 'arriba', a: '↑', dr: -1, dc: 0 },
+  { n: 'derecha', a: '→', dr: 0, dc: 1 },
+  { n: 'abajo', a: '↓', dr: 1, dc: 0 },
+  { n: 'izquierda', a: '←', dr: 0, dc: -1 },
+];
+const REWARD = { key: 3, door: 10, wall: -1, move: -0.1 };
+const ALPHA = 0.5, GAMMA = 0.9;
+const EPS_START = 1, EPS_DECAY = 0.98, EPS_MIN = 0.05;
+const MAX_STEPS = 100;
+
+function findCell(ch) { for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (MAP[r][c] === ch) return { r, c }; }
+const START = { ...findCell('S'), key: false };
+const sIdx = (st) => (st.key ? 25 : 0) + st.r * N + st.c;
+
+function envStep(st, a) {
+  const r = st.r + ACTIONS[a].dr, c = st.c + ACTIONS[a].dc;
+  if (r < 0 || r >= N || c < 0 || c >= N) return { st, reward: REWARD.wall, event: 'edge', done: false };
+  const ch = MAP[r][c];
+  if (ch === '#') return { st, reward: REWARD.wall, event: 'wall', done: false };
+  if (ch === 'D') {
+    if (!st.key) return { st, reward: REWARD.wall, event: 'locked', done: false };
+    return { st: { r, c, key: true }, reward: REWARD.door, event: 'exit', done: true };
+  }
+  if (ch === 'K' && !st.key) return { st: { r, c, key: true }, reward: REWARD.key, event: 'key', done: false };
+  return { st: { r, c, key: st.key }, reward: REWARD.move, event: ch === 'K' ? 'keyAgain' : 'move', done: false };
+}
+function newAgent() {
+  return { Q: new Float64Array(2 * N * N * 4), eps: EPS_START, st: null, stepInEp: 0, keyRewardsInEp: 0, episodes: [] };
+}
+function maxQ(Q, s) { return Math.max(Q[s * 4], Q[s * 4 + 1], Q[s * 4 + 2], Q[s * 4 + 3]); }
+function bestActions(Q, s) { const m = maxQ(Q, s); return [0, 1, 2, 3].filter((a) => Q[s * 4 + a] === m); }
+function greedy(Q, s, rng) { const b = bestActions(Q, s); return { a: b[Math.floor(rng() * b.length)], tied: b }; }
+
+function trainStep(ag, rng) {
+  if (!ag.st) { ag.st = { ...START }; ag.stepInEp = 0; ag.keyRewardsInEp = 0; }
+  const from = ag.st, s = sIdx(from), eps = ag.eps;
+  const roll = rng();
+  let a, explore, tied = null;
+  if (roll < eps) { explore = true; a = Math.floor(rng() * 4); }
+  else { explore = false; const g = greedy(ag.Q, s, rng); a = g.a; tied = g.tied; }
+  const res = envStep(from, a);
+  ag.stepInEp++;
+  if (res.event === 'key') ag.keyRewardsInEp++;
+  const before = ag.Q[s * 4 + a];
+  const maxNext = res.done ? 0 : maxQ(ag.Q, sIdx(res.st));
+  const target = res.reward + (res.done ? 0 : GAMMA * maxNext);
+  const after = before + ALPHA * (target - before);
+  ag.Q[s * 4 + a] = after;
+  const limit = !res.done && ag.stepInEp >= MAX_STEPS;
+  const rec = { kind: 'train', episode: ag.episodes.length + 1, step: ag.stepInEp, from, to: res.st, a, explore, roll, eps, tied,
+    reward: res.reward, event: res.event, done: res.done, limit, before, after, maxNext, target };
+  if (res.done || limit) {
+    ag.episodes.push({ n: ag.episodes.length + 1, steps: ag.stepInEp, outcome: res.done ? 'salida' : 'limite', gotKey: res.st.key, keyRewards: ag.keyRewardsInEp });
+    ag.eps = Math.max(EPS_MIN, ag.eps * EPS_DECAY);
+    ag.st = null;
+  } else {
+    ag.st = res.st;
+  }
+  return rec;
+}
+function testStep(Q, ts, rng) {
+  const from = ts.st, s = sIdx(from);
+  const g = greedy(Q, s, rng);
+  const res = envStep(from, g.a);
+  ts.steps++;
+  ts.st = res.st;
+  if (res.event === 'key') ts.keyRewards++;
+  const limit = !res.done && ts.steps >= MAX_STEPS;
+  if (res.done || limit) { ts.done = true; ts.outcome = res.done ? 'salida' : 'limite'; }
+  return { kind: 'test', step: ts.steps, from, to: res.st, a: g.a, tied: g.tied, value: Q[s * 4 + g.a], reward: res.reward, event: res.event, done: res.done, limit };
+}
+// CORE-END
+
+const SPEEDS = [1, 2, 4, 8, 15, 30, 60];
+const $ = (id) => document.getElementById(id);
+const cellName = (p) => 'ABCDE'[p.c] + (p.r + 1);
+const keyName = (k) => (k ? 'con llave' : 'sin llave');
+const stateHtml = (st) => `${cellName(st)} <span class="pill ${st.key ? 'haskey' : 'nokey'}">${st.key ? '🔑 con llave' : '🔒 sin llave'}</span>`;
+const f2 = (v) => (Math.abs(v) < 0.005 ? 0 : v).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const sgn = (v) => (v > 0 ? '+' : '') + f2(v);
+const cls = (v) => (v > 0.005 ? 'pos' : v < -0.005 ? 'neg' : '');
+
+let ag = newAgent();
+let mode = 'idle';
+let lastRec = null;
+let recent = [];
+let selected = { r: 0, c: 0 };
+let display = { ...START };
+let testState = null, testSnapshot = null;
+
+// ---------- construir tableros ----------
+function buildBoard(container, kind) {
+  const list = [];
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    const ch = MAP[r][c];
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'cell' + (ch === '#' ? ' wall' : ch === 'D' ? ' door' : ch === 'K' ? ' keycell' : '');
+    el.setAttribute('aria-label', 'Casilla ' + cellName({ r, c }) + (ch === '#' ? ', pared' : ch === 'D' ? ', puerta' : ch === 'K' ? ', llave' : ch === 'S' ? ', inicio' : ''));
+    el.style.gridRow = r + 1; el.style.gridColumn = c + 1;
+    if (ch === '#') el.disabled = true;
+    else if (kind === 'main') {
+      if (ch === 'D') el.innerHTML = '<span class="icon">🚪</span><span class="lock"></span>';
+      else if (ch === 'K') el.innerHTML = '<span class="icon">🔑</span>';
+      else if (ch === 'S') el.innerHTML = '<span class="tag">Inicio</span>';
+    } else {
+      el.innerHTML = '<span class="tint"></span><span class="arrow"></span><span class="val"></span>' + (ch === 'S' ? '<span class="tag">Ini</span>' : '');
+    }
+    el.addEventListener('click', () => { if (ch !== '#') { selected = { r, c }; renderMaps(); renderCompare(); renderMain(); } });
+    container.appendChild(el);
+    list.push(el);
+  }
+  return list;
+}
+const mainCells = buildBoard($('board'), 'main');
+const mapCells = [buildBoard($('mboard-0'), 'map'), buildBoard($('mboard-1'), 'map')];
+
+// Qué casillas no tienen decisiones en cada situación
+function noDecision(r, c, key) {
+  const ch = MAP[r][c];
+  if (ch === '#' || ch === 'D') return ch;
+  if (ch === 'K' && !key) return 'K';
+  return null;
+}
+
+function renderMain() {
+  const hasKey = display.key;
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    const el = mainCells[r * N + c], ch = MAP[r][c];
+    el.classList.toggle('sel', selected.r === r && selected.c === c);
+    if (ch === 'K') el.querySelector('.icon').classList.toggle('faded', hasKey);
+    if (ch === 'D') el.querySelector('.lock').textContent = hasKey ? '' : '🔒';
+  }
+  $('bot').style.transform = `translate(calc(${display.c} * (100% + 4px)), calc(${display.r} * (100% + 4px)))`;
+  $('carry').textContent = hasKey ? '🔑' : '';
+  const b = $('badge');
+  b.className = 'badge ' + (hasKey ? 'haskey' : 'nokey');
+  b.textContent = hasKey ? '🔑 Con llave' : '🔒 Sin llave';
+}
+
+function renderMaps() {
+  const Q = ag.Q;
+  for (let k = 0; k < 2; k++) {
+    const key = k === 1;
+    $('map-' + k).classList.toggle('current', display.key === key);
+    $('now-' + k).textContent = display.key === key ? 'el robot está acá' : '';
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+      const el = mapCells[k][r * N + c];
+      el.classList.toggle('sel', selected.r === r && selected.c === c);
+      el.classList.toggle('here', display.key === key && display.r === r && display.c === c);
+      const nd = noDecision(r, c, key);
+      if (nd === '#') continue;
+      const arrow = el.querySelector('.arrow'), val = el.querySelector('.val'), tint = el.querySelector('.tint');
+      if (nd === 'D') { arrow.textContent = '🚪'; arrow.className = 'arrow'; val.textContent = ''; tint.style.opacity = 0; continue; }
+      if (nd === 'K') { arrow.textContent = '🔑'; arrow.className = 'arrow'; val.textContent = ''; tint.style.opacity = 0; continue; }
+      const s = sIdx({ r, c, key });
+      const vals = [0, 1, 2, 3].map((a) => Q[s * 4 + a]);
+      const best = bestActions(Q, s);
+      const allZero = vals.every((v) => v === 0);
+      if (allZero || best.length === 4) { arrow.textContent = '·'; arrow.className = 'arrow none'; }
+      else { arrow.textContent = best.map((a) => ACTIONS[a].a).join(''); arrow.className = 'arrow'; }
+      const m = maxQ(Q, s);
+      val.textContent = allZero ? '' : f2(m);
+      if (m > 0) { tint.style.background = 'var(--good)'; tint.style.opacity = Math.min(1, m / 10) * 0.45; }
+      else if (m < 0) { tint.style.background = 'var(--bad)'; tint.style.opacity = Math.min(1, -m / 5) * 0.45; }
+      else tint.style.opacity = 0;
+    }
+  }
+}
+
+function compassHtml(key) {
+  const { r, c } = selected;
+  const nd = noDecision(r, c, key);
+  const title = key ? '🔑 Con llave' : '🔒 Sin llave';
+  if (nd === 'D') return `<div class="cmp ${key ? 'haskey' : 'nokey'}"><h3>${title}</h3><p class="empty">La puerta no tiene valores: ${key ? 'al entrar con llave el intento termina' : 'sin llave no se puede entrar'}.</p></div>`;
+  if (nd === 'K') return `<div class="cmp nokey"><h3>${title}</h3><p class="empty">Nunca está acá sin llave: al entrar la recoge y pasa a “con llave”.</p></div>`;
+  const s = sIdx({ r, c, key }), Q = ag.Q;
+  const best = bestActions(Q, s), allEqual = best.length === 4;
+  const changedA = lastRec && lastRec.kind === 'train' && sIdx(lastRec.from) === s ? lastRec.a : -1;
+  const pos = ['up', 'right', 'down', 'left'];
+  let h = `<div class="cmp ${key ? 'haskey' : 'nokey'}"><h3>${title}</h3><div class="compass">`;
+  for (let a = 0; a < 4; a++) {
+    const v = Q[s * 4 + a];
+    h += `<div class="cq ${pos[a]}${!allEqual && best.includes(a) ? ' best' : ''}${changedA === a ? ' changed' : ''}">
+      <span class="ar">${ACTIONS[a].a}</span><span class="nm">${ACTIONS[a].n}</span><span class="qv ${cls(v)}">${f2(v)}</span>
+      ${changedA === a ? `<span class="ch">antes ${f2(lastRec.before)}</span>` : ''}</div>`;
+  }
+  h += `<div class="cq center">${cellName(selected)}</div></div></div>`;
+  return h;
+}
+function prefText(key) {
+  const { r, c } = selected;
+  if (noDecision(r, c, key)) return null;
+  const s = sIdx({ r, c, key }), best = bestActions(ag.Q, s);
+  if (best.length === 4) return null;
+  return best;
+}
+function renderCompare() {
+  $('cmp-cell').textContent = cellName(selected);
+  $('compare').innerHTML = compassHtml(false) + compassHtml(true);
+  const p0 = prefText(false), p1 = prefText(true);
+  const names = (b) => b.map((a) => `${ACTIONS[a].a} ${ACTIONS[a].n}`).join(' o ');
+  let v;
+  if (!p0 && !p1) v = `En ${cellName(selected)} todavía no prefiere ninguna dirección en ninguna de las dos situaciones.`;
+  else if (!p0) v = `En ${cellName(selected)}: sin llave todavía no tiene preferencia; con llave prefiere <b>${names(p1)}</b>.`;
+  else if (!p1) v = `En ${cellName(selected)}: sin llave prefiere <b>${names(p0)}</b>; con llave todavía no tiene preferencia.`;
+  else {
+    const same = p0.length === p1.length && p0.every((a) => p1.includes(a));
+    v = `En ${cellName(selected)}: sin llave prefiere <b>${names(p0)}</b>; con llave prefiere <b>${names(p1)}</b>. ` +
+      (same ? 'En esta casilla la decisión es la misma en las dos situaciones.' : '<b>Misma casilla, decisión distinta</b>: lo que conviene depende de si ya tiene la llave.');
+  }
+  $('cmp-verdict').innerHTML = v;
+}
+
+// ---------- detalle del paso ----------
+function eventText(rec) {
+  switch (rec.event) {
+    case 'edge': return `Chocó contra el borde del tablero y se quedó en ${cellName(rec.from)}.`;
+    case 'wall': return `Chocó contra una pared y se quedó en ${cellName(rec.from)}.`;
+    case 'locked': return 'Intentó entrar a la puerta sin llave: está cerrada, así que chocó y se quedó donde estaba.';
+    case 'key': return `¡Recogió la llave en ${cellName(rec.to)}! Desde ahora está en la situación “con llave”.`;
+    case 'keyAgain': return `Pasó por ${cellName(rec.to)}, donde estaba la llave, pero ya la tiene: es un paso normal, sin premio.`;
+    case 'exit': return '¡Abrió la puerta con la llave y salió! El intento terminó.';
+    default: return `Se movió a ${cellName(rec.to)}.`;
+  }
+}
+const rewardLabel = { edge: 'borde', wall: 'pared', locked: 'puerta cerrada', key: 'llave', keyAgain: 'paso normal', exit: 'puerta abierta', move: 'paso normal' };
+
+function renderStep() {
+  const rec = lastRec;
+  if (!rec) {
+    $('step-idx').textContent = '';
+    $('step-body').innerHTML = '<p class="empty">Todavía no hubo ningún paso. Apretá <b>Un paso</b> y acá vas a ver el estado del robot, qué hizo y qué valor de la tabla cambió.</p>';
+    return;
+  }
+  const act = `${ACTIONS[rec.a].a} ${ACTIONS[rec.a].n}`;
+  const rewardTxt = `<span class="num ${cls(rec.reward)}">${sgn(rec.reward)}</span> (${rewardLabel[rec.event]})`;
+  if (rec.kind === 'test') {
+    $('step-idx').textContent = `Prueba · paso ${rec.step}`;
+    const why = rec.tied.length > 1
+      ? `Varias direcciones empataban con ${f2(rec.value)} en el mapa “${keyName(rec.from.key)}”; sorteó entre ellas y salió ${act}.`
+      : `Eligió ${act} porque es la dirección con mayor valor en ${cellName(rec.from)} ${keyName(rec.from.key)} (${f2(rec.value)}).`;
+    $('step-body').innerHTML = `
+      <dl class="facts">
+        <dt>Estado anterior</dt><dd>${stateHtml(rec.from)}</dd>
+        <dt>Movimiento</dt><dd>${act}</dd>
+        <dt>Modo</dt><dd><span class="pill exploit">Prueba: aprovecha lo aprendido, sin explorar</span></dd>
+        <dt>Recompensa</dt><dd>${rewardTxt}</dd>
+        <dt>Valor Q</dt><dd>Sin cambios: en la prueba la tabla no se modifica.</dd>
+      </dl>
+      <div class="explain"><p>${why} ${eventText(rec)}${rec.limit ? ' Llegó a 100 movimientos y la prueba se cortó.' : ''}</p></div>`;
+    return;
+  }
+  $('step-idx').textContent = `Intento ${rec.episode} · paso ${rec.step}`;
+  let how;
+  if (rec.explore) how = `Estaba <b>explorando</b>: sorteó ${f2(rec.roll)}, que es menor que ε = ${f2(rec.eps)}, así que eligió una dirección al azar: ${act}.`;
+  else if (rec.tied.length > 1) how = `<b>Aprovechó lo aprendido</b> (sorteó ${f2(rec.roll)}, no menor que ε = ${f2(rec.eps)}), pero ${rec.tied.length === 4 ? 'las cuatro direcciones' : 'varias direcciones'} empataban con ${f2(rec.before)} en el mapa “${keyName(rec.from.key)}”, así que sorteó entre ellas: ${act}.`;
+  else how = `<b>Aprovechó lo aprendido</b> (sorteó ${f2(rec.roll)}, no menor que ε = ${f2(rec.eps)}): en el mapa “${keyName(rec.from.key)}”, ${act} tenía el mayor valor (${f2(rec.before)}).`;
+  const switched = rec.event === 'key'
+    ? ` Ojo: el valor futuro se busca en el mapa <b>con llave</b>, porque esa es su nueva situación.`
+    : '';
+  const targetTxt = rec.done
+    ? `Salió, así que no hay recompensa futura: el objetivo es solo la recompensa, ${sgn(rec.reward)}.`
+    : `Lo mejor que conoce desde ${cellName(rec.to)} ${keyName(rec.to.key)} vale ${f2(rec.maxNext)}. Objetivo = ${sgn(rec.reward)} + 0,9 × ${f2(rec.maxNext)} = ${f2(rec.target)}.${switched}`;
+  const diff = rec.after - rec.before;
+  const verdict = Math.abs(diff) < 1e-9 ? 'El valor no cambió porque ya coincidía con el objetivo.'
+    : diff > 0 ? `Subió: ir ${ACTIONS[rec.a].n} desde ${cellName(rec.from)} ${keyName(rec.from.key)} ahora parece mejor.`
+    : `Bajó: ir ${ACTIONS[rec.a].n} desde ${cellName(rec.from)} ${keyName(rec.from.key)} ahora parece peor.`;
+  $('step-body').innerHTML = `
+    <dl class="facts">
+      <dt>Estado anterior</dt><dd>${stateHtml(rec.from)}</dd>
+      <dt>Movimiento</dt><dd>${act}</dd>
+      <dt>Modo</dt><dd>${rec.explore ? '<span class="pill explore">Exploró (al azar)</span>' : '<span class="pill exploit">Aprovechó lo aprendido</span>'}</dd>
+      <dt>Recompensa</dt><dd>${rewardTxt}</dd>
+      <dt>Estado nuevo</dt><dd>${stateHtml(rec.to)}</dd>
+      <dt>Valor Q</dt><dd>Q(${cellName(rec.from)}, ${keyName(rec.from.key)}, ${ACTIONS[rec.a].a}): <span class="num ${cls(rec.before)}">${f2(rec.before)}</span> → <span class="num ${cls(rec.after)}">${f2(rec.after)}</span></dd>
+    </dl>
+    <div class="formula">Q nuevo = ${f2(rec.before)} + 0,5 × (${f2(rec.target)} − ${f2(rec.before)}) = ${f2(rec.after)}</div>
+    <div class="explain">
+      <p>${how} ${eventText(rec)}${rec.limit ? ' Llegó a 100 movimientos: el intento se corta.' : ''}</p>
+      <p>${targetTxt} El valor se acercó la mitad del camino hacia ese objetivo. ${verdict}</p>
+    </div>`;
+}
+function pushRecent(rec) {
+  const st = (s) => `${cellName(s)}${s.key ? '🔑' : ''}`;
+  recent.unshift(rec.kind === 'test'
+    ? `prueba ${rec.step}: ${st(rec.from)} ${ACTIONS[rec.a].a} ${sgn(rec.reward)} · sin cambios`
+    : `${rec.episode}.${rec.step}: ${st(rec.from)} ${ACTIONS[rec.a].a} ${rec.explore ? 'azar' : 'aprendido'} ${sgn(rec.reward)} · Q ${f2(rec.before)}→${f2(rec.after)}`);
+  recent = recent.slice(0, 6);
+}
+function renderRecent() { $('recent').innerHTML = recent.map((l) => `<li>${l}</li>`).join(''); }
+
+// ---------- estadísticas y gráfico ----------
+function renderStats() {
+  const eps = ag.episodes;
+  $('st-eps').textContent = eps.length;
+  $('st-ok').textContent = eps.filter((e) => e.outcome === 'salida').length;
+  $('st-key').textContent = eps.filter((e) => e.gotKey).length;
+  $('st-step').textContent = ag.st ? ag.stepInEp : 0;
+  $('st-epsv').textContent = f2(ag.eps);
+  if (eps.length) {
+    const l = eps.slice(-10);
+    const avg = l.reduce((s, e) => s + e.steps, 0) / l.length;
+    $('chart-sum').textContent = `Últimos ${l.length}: ${l.filter((e) => e.outcome === 'salida').length} salidas, promedio ${avg.toLocaleString('es-AR', { maximumFractionDigits: 1 })} movimientos`;
+  } else $('chart-sum').textContent = '';
+}
+const color = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function renderChart() {
+  const box = $('chart-box'), cv = $('chart');
+  const w = box.clientWidth, h = box.clientHeight;
+  if (!w || !h) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const L = 34, R = 8, T = 10, B = 24, pw = w - L - R, ph = h - T - B;
+  const muted = color('--muted'), line = color('--line');
+  ctx.font = '11px ' + color('--font-num');
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.lineWidth = 1;
+  for (const v of [0, 25, 50, 75, 100]) {
+    const y = T + ph - v / 100 * ph;
+    ctx.strokeStyle = line; ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(L + pw, y); ctx.stroke();
+    ctx.fillStyle = muted; ctx.fillText(String(v), L - 6, y);
+  }
+  const eps = ag.episodes, n = Math.max(eps.length, 20), bw = pw / n;
+  const cOk = color('--good'), cFk = color('--key'), cFn = color('--neutral');
+  eps.forEach((e, i) => {
+    const bh = e.steps / 100 * ph;
+    ctx.fillStyle = e.outcome === 'salida' ? cOk : e.gotKey ? cFk : cFn;
+    ctx.fillRect(L + i * bw + (bw > 4 ? 1 : 0), T + ph - bh, Math.max(1, bw - (bw > 4 ? 2 : 0)), bh);
+  });
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillStyle = muted;
+  const st = n <= 20 ? 5 : n <= 60 ? 10 : n <= 150 ? 25 : n <= 400 ? 50 : 100;
+  for (let k = st; k <= n; k += st) ctx.fillText(String(k), L + (k - 0.5) * bw, T + ph + 6);
+  if (!eps.length) { ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText('Todavía no terminó ningún intento.', L + 10, T + ph / 2); }
+}
+function renderAll() { renderMain(); renderMaps(); renderCompare(); renderStep(); renderRecent(); renderStats(); renderChart(); }
+
+// ---------- acciones ----------
+function doTrainStep() {
+  const rec = trainStep(ag, Math.random);
+  lastRec = rec; display = { ...rec.to };
+  pushRecent(rec);
+  return rec;
+}
+const setStatus = (h) => { $('status').innerHTML = h; };
+function setMode(m) {
+  mode = m;
+  $('btn-step').disabled = m !== 'idle';
+  $('btn-auto').disabled = !(m === 'idle' || m === 'auto');
+  $('btn-auto').textContent = m === 'auto' ? 'Pausar' : 'Entrenar automáticamente';
+  $('btn-batch').disabled = !(m === 'idle' || m === 'batch');
+  $('btn-batch').textContent = m === 'batch' ? 'Detener' : 'Entrenar 100 intentos';
+  $('btn-test').disabled = !(m === 'idle' || m === 'test');
+  $('btn-test').textContent = m === 'test' ? 'Detener prueba' : 'Probar lo aprendido';
+  $('btn-reset').disabled = m !== 'idle';
+}
+let lastT = 0, acc = 0;
+function startTimer() { lastT = 0; acc = 1; requestAnimationFrame(tick); }
+function tick(t) {
+  if (mode !== 'auto' && mode !== 'test') return;
+  if (!lastT) lastT = t;
+  acc += (t - lastT) / 1000 * SPEEDS[+$('in-speed').value];
+  lastT = t;
+  let n = Math.min(Math.floor(acc), 30);
+  acc -= Math.floor(acc);
+  while (n-- > 0) {
+    if (mode === 'auto') doTrainStep();
+    else if (mode === 'test' && runTestStep()) break;
+  }
+  if (mode === 'auto') setStatus(`Entrenando… intento <b>${ag.episodes.length + (ag.st ? 1 : 0)}</b>.`);
+  renderAll();
+  if (mode === 'auto' || mode === 'test') requestAnimationFrame(tick);
+}
+$('btn-step').addEventListener('click', () => {
+  const rec = doTrainStep();
+  setStatus(rec.done || rec.limit ? `Intento ${rec.episode} terminado. El próximo paso empieza otro desde el inicio, sin llave.` : 'Paso hecho. Mirá a la derecha qué valor cambió.');
+  renderAll();
+});
+$('btn-auto').addEventListener('click', () => {
+  if (mode === 'auto') { setMode('idle'); setStatus('En pausa.'); renderAll(); return; }
+  setMode('auto'); startTimer();
+});
+$('in-speed').addEventListener('input', (e) => {
+  const v = SPEEDS[+e.target.value];
+  $('out-speed').textContent = v + (v === 1 ? ' paso por segundo' : ' pasos por segundo');
+});
+$('btn-batch').addEventListener('click', () => {
+  if (mode === 'batch') { setMode('idle'); setStatus(`Detenido con ${ag.episodes.length} intentos completados.`); renderAll(); return; }
+  setMode('batch');
+  const start = ag.episodes.length, target = start + 100;
+  const chunk = () => {
+    if (mode !== 'batch') return;
+    const t0 = performance.now();
+    while (ag.episodes.length < target && performance.now() - t0 < 12) doTrainStep();
+    setStatus(`Entrenando en bloque… <b>${ag.episodes.length - start}</b> de 100 intentos.`);
+    renderAll();
+    if (ag.episodes.length < target) setTimeout(chunk, 0);
+    else { setMode('idle'); setStatus(`Listo: 100 intentos más (${ag.episodes.length} en total). Probá “Probar lo aprendido” y compará casillas en los dos mapas.`); }
+  };
+  setTimeout(chunk, 0);
+});
+function runTestStep() {
+  const rec = testStep(ag.Q, testState, Math.random);
+  lastRec = rec; display = { ...rec.to };
+  pushRecent(rec);
+  if (testState.done) { finishTest(false); return true; }
+  return false;
+}
+function finishTest(stopped) {
+  let same = true;
+  for (let i = 0; i < ag.Q.length; i++) if (ag.Q[i] !== testSnapshot[i]) { same = false; break; }
+  const out = testState.outcome === 'salida'
+    ? `recogió la llave y salió en <b>${testState.steps}</b> movimientos`
+    : stopped ? `se detuvo en el movimiento ${testState.steps}`
+    : `no salió en 100 movimientos${testState.st.key ? ' (tenía la llave)' : ' (no consiguió la llave)'}`;
+  setStatus(`Prueba: ${out}. ${same ? 'Comprobado: los 200 valores Q son idénticos a los de antes de la prueba ✓' : '⚠ La tabla Q cambió durante la prueba.'}`);
+  setMode('idle');
+  renderAll();
+}
+$('btn-test').addEventListener('click', () => {
+  if (mode === 'test') { finishTest(true); return; }
+  testState = { st: { ...START }, steps: 0, done: false, outcome: null, keyRewards: 0 };
+  testSnapshot = Float64Array.from(ag.Q);
+  display = { ...START };
+  setMode('test');
+  setStatus('Probando: empieza sin llave, sin exploración y sin modificar la tabla Q.');
+  renderAll();
+  startTimer();
+});
+$('btn-reset').addEventListener('click', () => {
+  ag = newAgent(); lastRec = null; recent = []; display = { ...START };
+  setStatus('Aprendizaje borrado: los 200 valores Q volvieron a cero y ε a 1.');
+  renderAll();
+});
+
+new ResizeObserver(() => renderChart()).observe($('chart-box'));
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderChart);
+new MutationObserver(renderChart).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+setMode('idle');
+renderAll();
+</script>
+</body>
+</html>

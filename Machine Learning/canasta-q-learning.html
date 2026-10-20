@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Canasta que aprende</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: huerta (tablero + controles + marcador) a la izquierda; a la derecha lo que observa la IA y el último turno; debajo estrategia aprendida, evaluaciones y guía */
+:root {
+  --bg: #f4f2ec;
+  --surface: #ffffff;
+  --sunken: #ebe8df;
+  --ink: #23201a;
+  --muted: #6a6457;
+  --line: #ddd8cc;
+  --sky: #e5eef6;
+  --grass: #3f8a3a;
+  --good: #2a8443;
+  --good-soft: #def0e1;
+  --bad: #c7392b;
+  --bad-soft: #f9e0dc;
+  --explore: #b8650a;
+  --explore-soft: #fbead3;
+  --exploit: #2b62c4;
+  --exploit-soft: #dde8fb;
+  --neutral: #8f897c;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  --font-body: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-num: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  --radius: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14130f; --surface: #1d1c17; --sunken: #28261f; --ink: #efebe1; --muted: #aba393; --line: #36332a;
+    --sky: #1c2733; --grass: #5fb85a; --good: #55c472; --good-soft: #17331f; --bad: #ff7a68; --bad-soft: #43201b;
+    --explore: #f2a24a; --explore-soft: #3d2b14; --exploit: #78a6ff; --exploit-soft: #1b2a47; --neutral: #847e72;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14130f; --surface: #1d1c17; --sunken: #28261f; --ink: #efebe1; --muted: #aba393; --line: #36332a;
+  --sky: #1c2733; --grass: #5fb85a; --good: #55c472; --good-soft: #17331f; --bad: #ff7a68; --bad-soft: #43201b;
+  --explore: #f2a24a; --explore-soft: #3d2b14; --exploit: #78a6ff; --exploit-soft: #1b2a47; --neutral: #847e72;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 48px;
+}
+.wrap { max-width: 1140px; margin: 0 auto; display: grid; gap: 20px; }
+h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(1.9rem, 5vw, 2.6rem); line-height: 1.05; font-weight: 800; letter-spacing: -0.015em; }
+h2 { font-size: 1.2rem; font-weight: 750; }
+h3 { font-size: 1rem; font-weight: 700; }
+p { margin: 0; }
+header { display: grid; gap: 8px; }
+.eyebrow { font-size: 0.76rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--bad); }
+.lede { color: var(--muted); max-width: 68ch; font-size: 1.04rem; }
+.lede b { color: var(--ink); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.idx { font-family: var(--font-num); font-size: 0.85rem; color: var(--muted); }
+.hint { font-size: 0.84rem; color: var(--muted); }
+.empty { color: var(--muted); font-size: 0.94rem; }
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.pos { color: var(--good); } .neg { color: var(--bad); }
+
+.main { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .main { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); align-items: start; } }
+.col { display: grid; gap: 14px; min-width: 0; }
+
+/* Tablero */
+.board-card { padding: 14px; display: grid; gap: 10px; }
+.banner { text-align: center; font-weight: 750; font-family: var(--font-display); padding: 8px 10px; border-radius: 10px; background: var(--sunken); color: var(--muted); }
+.banner.catch { background: var(--good-soft); color: var(--good); }
+.banner.miss { background: var(--bad-soft); color: var(--bad); }
+.banner.pop { animation: pop 0.3s ease-out; }
+@keyframes pop { from { transform: scale(0.94); } to { transform: scale(1); } }
+.frame { display: grid; grid-template-columns: 1.6em minmax(0, 1fr); grid-template-rows: auto 1.4em; gap: 3px; width: 100%; max-width: 380px; justify-self: center; }
+.rows { display: grid; grid-template-rows: repeat(6, 1fr); align-items: center; text-align: center; font-size: 0.74rem; color: var(--muted); font-weight: 600; }
+.cols { grid-column: 2; display: grid; grid-template-columns: repeat(5, 1fr); text-align: center; font-size: 0.74rem; color: var(--muted); font-weight: 600; }
+.board { display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(6, 1fr); gap: 3px; aspect-ratio: 5 / 6; background: var(--sky); border-radius: 10px; padding: 3px; max-width: 100%; }
+.cell { border-radius: 6px; display: grid; place-items: center; font-size: clamp(1.4rem, 7vw, 2.2rem); line-height: 1; position: relative; }
+.cell.ground { background: color-mix(in srgb, var(--grass) 22%, transparent); }
+.cell.apple-col { background: color-mix(in srgb, var(--bad) 7%, transparent); }
+.cell.ground.apple-col { background: color-mix(in srgb, var(--bad) 18%, color-mix(in srgb, var(--grass) 22%, transparent)); }
+.cell .both { display: grid; place-items: center; }
+.cell .both .a { position: absolute; top: 2px; font-size: 0.6em; }
+@media (prefers-reduced-motion: reduce) { .banner.pop { animation: none; } }
+.turn { text-align: center; font-size: 0.88rem; color: var(--muted); }
+
+/* Controles */
+.controls { padding: 14px; display: grid; gap: 12px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn { font: inherit; font-weight: 650; font-size: 0.95rem; cursor: pointer; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--sunken); color: var(--ink); }
+.btn:hover:not(:disabled) { border-color: var(--muted); }
+.btn.primary { background: var(--good); border-color: var(--good); color: var(--surface); }
+.btn.test { background: var(--exploit); border-color: var(--exploit); color: var(--surface); }
+.btn.danger { background: transparent; color: var(--bad); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+:focus-visible { outline: 3px solid var(--explore); outline-offset: 2px; }
+.speed { display: grid; gap: 2px; }
+.speed-head { display: flex; justify-content: space-between; font-size: 0.9rem; }
+.speed-head output { font-family: var(--font-num); font-size: 0.85rem; }
+input[type="range"] { width: 100%; accent-color: var(--good); }
+.statusline { font-size: 0.9rem; color: var(--muted); min-height: 1.5em; }
+.statusline b { color: var(--ink); }
+
+/* Marcador */
+.score { padding: 14px; display: grid; gap: 10px; }
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+@media (max-width: 460px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.stat { background: var(--surface); padding: 8px 10px; display: grid; }
+.stat .k { font-size: 0.74rem; color: var(--muted); }
+.stat .v { font-family: var(--font-num); font-size: 1.1rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .s { font-size: 0.72rem; color: var(--muted); }
+.dots { display: flex; flex-wrap: wrap; gap: 3px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; }
+.dot.c { background: var(--good); } .dot.m { background: var(--bad); }
+
+/* Observación y barras */
+.obs { padding: 16px; display: grid; gap: 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { background: var(--sunken); border-radius: 999px; padding: 3px 11px; font-size: 0.9rem; }
+.chip b { font-family: var(--font-num); }
+.bars { display: grid; gap: 7px; }
+.bar { display: grid; grid-template-columns: 6.8em minmax(0, 1fr) 4.2em; gap: 8px; align-items: center; font-size: 0.92rem; }
+.bar .lbl { white-space: nowrap; }
+.bar.best .lbl { font-weight: 750; }
+.bar.chosen .lbl::after { content: " ◀"; color: var(--explore); font-size: 0.8em; }
+.track { position: relative; height: 18px; background: var(--sunken); border-radius: 6px; overflow: hidden; }
+.track::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--muted); opacity: 0.6; }
+.fill { position: absolute; top: 3px; bottom: 3px; border-radius: 4px; }
+.fill.p { left: 50%; background: var(--good); }
+.fill.n { right: 50%; background: var(--bad); }
+.mark { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink); opacity: 0.8; }
+.bar .val { font-family: var(--font-num); font-size: 0.85rem; text-align: right; }
+.scale { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--muted); font-family: var(--font-num); margin-left: calc(6.8em + 8px); margin-right: calc(4.2em + 8px); }
+
+.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; font-size: 0.95rem; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; font-weight: 600; min-width: 0; }
+.pill { display: inline-block; font-size: 0.8rem; font-weight: 700; padding: 1px 9px; border-radius: 999px; }
+.pill.explore { background: var(--explore-soft); color: var(--explore); }
+.pill.exploit { background: var(--exploit-soft); color: var(--exploit); }
+.formula { font-family: var(--font-num); font-size: 0.8rem; background: var(--sunken); border-radius: 8px; padding: 8px 10px; overflow-x: auto; white-space: nowrap; }
+.explain { background: var(--good-soft); border-radius: 10px; padding: 10px 12px; font-size: 0.95rem; display: grid; gap: 6px; }
+.recent { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; font-size: 0.8rem; font-family: var(--font-num); color: var(--muted); }
+.recent li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent li:first-child { color: var(--ink); }
+
+/* Estrategia */
+.policy-card { padding: 16px; display: grid; gap: 12px; }
+.seg { display: inline-grid; grid-auto-flow: column; background: var(--sunken); border: 1px solid var(--line); border-radius: 8px; padding: 3px; gap: 3px; }
+.seg button { border: 0; background: transparent; color: var(--muted); border-radius: 6px; padding: 5px 10px; font: inherit; font-size: 0.88rem; font-weight: 650; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line); }
+.policy-wrap { overflow-x: auto; }
+.policy { border-collapse: separate; border-spacing: 3px; margin: 0 auto; }
+.policy th { font-size: 0.78rem; color: var(--muted); font-weight: 600; padding: 2px 6px; }
+.policy td { width: 46px; height: 40px; text-align: center; border-radius: 6px; background: var(--sunken); font-size: 1.15rem; font-weight: 700; }
+.policy td.diag { box-shadow: inset 0 0 0 2px var(--good); }
+.policy td.none { color: var(--neutral); font-weight: 400; }
+
+/* Evaluaciones */
+.eval-card { padding: 16px; display: grid; gap: 10px; }
+.evals { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.evals li { display: grid; gap: 4px; padding: 8px 10px; border-radius: 10px; background: var(--sunken); }
+.evals .t { font-size: 0.92rem; }
+.evals .t b { font-family: var(--font-num); }
+
+/* Guía */
+.learn { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.learn .card { padding: 16px; display: grid; gap: 8px; align-content: start; }
+.learn p, .learn li { color: var(--muted); font-size: 0.95rem; }
+.learn b { color: var(--ink); }
+.learn ol, .learn ul { margin: 0; padding-left: 20px; display: grid; gap: 5px; }
+footer { font-size: 0.86rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Aprendizaje por refuerzo · Q-learning</span>
+    <h1>Canasta que aprende</h1>
+    <p class="lede">Cae una manzana y la IA mueve la canasta. Nadie le dijo que tiene que seguir a la fruta: solo recibe <b>+10 si la atrapa</b> y <b>−5 si la pierde</b>. Mirá cómo, turno a turno, descubre qué le conviene.</p>
+  </header>
+
+  <div class="main">
+    <div class="col">
+      <section class="board-card card" aria-label="Tablero">
+        <div class="banner" id="banner" aria-live="polite">Todavía no cayó ninguna manzana.</div>
+        <div class="frame">
+          <div class="rows"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span></div>
+          <div class="board" id="board"></div>
+          <div class="cols"><span>A</span><span>B</span><span>C</span><span>D</span><span>E</span></div>
+        </div>
+        <p class="turn" id="turn"></p>
+      </section>
+
+      <section class="controls card" aria-label="Controles">
+        <div class="row">
+          <button class="btn" type="button" id="btn-step">Un paso</button>
+          <button class="btn primary" type="button" id="btn-auto">Entrenar automáticamente</button>
+          <button class="btn" type="button" id="btn-batch">Entrenar 100 frutas</button>
+        </div>
+        <div class="speed">
+          <div class="speed-head"><label for="in-speed">Velocidad</label><output id="out-speed">4 turnos por segundo</output></div>
+          <input type="range" id="in-speed" min="0" max="6" step="1" value="2">
+        </div>
+        <div class="row">
+          <button class="btn test" type="button" id="btn-eval">Evaluar 30 frutas</button>
+          <button class="btn danger" type="button" id="btn-reset">Borrar aprendizaje</button>
+        </div>
+        <p class="statusline" id="status" aria-live="polite">Listo. Los 375 valores Q están en cero.</p>
+      </section>
+
+      <section class="score card" aria-label="Marcador de entrenamiento">
+        <div class="head"><h2>Entrenamiento</h2></div>
+        <div class="stats">
+          <div class="stat"><span class="k">Atrapadas</span><span class="v pos" id="st-c">0</span></div>
+          <div class="stat"><span class="k">Perdidas</span><span class="v neg" id="st-m">0</span></div>
+          <div class="stat"><span class="k">Aciertos últimas 50</span><span class="v" id="st-p">–</span><span class="s" id="st-ps">sin intentos</span></div>
+          <div class="stat"><span class="k">Exploración ε</span><span class="v" id="st-e">1,00</span></div>
+        </div>
+        <div class="dots" id="dots" aria-label="Resultado de las últimas 50 manzanas"></div>
+        <p class="hint">Cada punto es una manzana de entrenamiento reciente: verde atrapada, roja perdida. Las evaluaciones no se cuentan acá.</p>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="obs card" aria-label="Lo que observa la IA ahora">
+        <div class="head"><h2>Lo que observa ahora</h2><span class="idx">antes de decidir</span></div>
+        <div class="chips" id="obs-chips"></div>
+        <div class="bars" id="bars-now"></div>
+        <div class="scale"><span>−10</span><span>0</span><span>+10</span></div>
+        <p class="hint" id="obs-hint"></p>
+      </section>
+
+      <section class="obs card" aria-label="Último turno">
+        <div class="head"><h2>Qué pasó en el último turno</h2><span class="idx" id="step-idx"></span></div>
+        <div id="step-body"><p class="empty">Todavía no hubo turnos. Apretá <b>Un paso</b> para ver uno.</p></div>
+        <ol class="recent" id="recent" aria-label="Turnos recientes"></ol>
+      </section>
+    </div>
+  </div>
+
+  <section class="policy-card card" aria-label="Estrategia aprendida">
+    <div class="head">
+      <h2>Estrategia aprendida</h2>
+      <div class="seg" id="seg-row" role="group" aria-label="Fila de la manzana">
+        <button type="button" data-r="0" aria-pressed="true">Fila 1</button>
+        <button type="button" data-r="1" aria-pressed="false">2</button>
+        <button type="button" data-r="2" aria-pressed="false">3</button>
+        <button type="button" data-r="3" aria-pressed="false">4</button>
+        <button type="button" data-r="4" aria-pressed="false">5</button>
+      </div>
+    </div>
+    <p class="hint">Para cada combinación de dónde está la canasta (filas) y dónde está la manzana (columnas), la acción con mayor valor Q cuando la manzana está en la fila elegida. ← izquierda · • quedarse · → derecha · “?” todavía sin preferencia. El borde verde marca cuando canasta y manzana están en la misma columna.</p>
+    <div class="policy-wrap"><table class="policy" id="policy"></table></div>
+  </section>
+
+  <section class="eval-card card" aria-label="Evaluaciones">
+    <div class="head"><h2>Evaluaciones</h2><span class="idx">siempre las mismas 30 manzanas</span></div>
+    <p class="hint">“Evaluar 30 frutas” usa siempre la misma secuencia de columnas y el mismo sorteo para los empates, sin exploración y sin tocar la tabla Q. Así podés comparar el antes y el después de entrenar.</p>
+    <ol class="evals" id="evals"><li class="empty">Todavía no hiciste ninguna evaluación. Probá hacer una antes de entrenar.</li></ol>
+  </section>
+
+  <section class="learn">
+    <div class="card">
+      <h3>Qué ve y qué recuerda</h3>
+      <p>La IA observa tres números: <b>columna de la canasta, columna de la manzana y fila de la manzana</b>. Son 5 × 5 × 5 = 125 situaciones posibles, cada una con 3 valores (izquierda, quedarse, derecha): una <b>tabla de 375 números</b>. No hay red neuronal.</p>
+      <p>Un valor Q <b>estima recompensa futura</b>: cuánto espera ganar al final de esta manzana si hace esa acción y después juega lo mejor que sabe. <b>No es un porcentaje de confianza</b>: puede ser negativo (hasta −5) o llegar cerca de +10.</p>
+    </div>
+    <div class="card">
+      <h3>La regla de cada turno</h3>
+      <p><b>objetivo = recompensa + 0,9 × mejor valor de la situación siguiente</b><br><b>Q nuevo = Q viejo + 0,5 × (objetivo − Q viejo)</b></p>
+      <ul>
+        <li>Los turnos intermedios dan 0, así que el premio del final “viaja hacia atrás” de a un turno.</li>
+        <li>Cuando la manzana llega abajo, el objetivo es solo +10 o −5: no hay futuro.</li>
+        <li>Exploración ε: empieza en 1 (todo al azar) y se multiplica por 0,97 en cada manzana, hasta un mínimo de 0,05. Los empates se sortean.</li>
+        <li>Si la canasta está en un borde y elige ir hacia afuera, se queda donde está.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Guía: antes y después</h3>
+      <ol>
+        <li><b>Antes de entrenar</b>, apretá “Evaluar 30 frutas”. Con todo en cero la IA sortea en cada turno: el resultado depende de la suerte.</li>
+        <li>Dá algunos <b>Un paso</b>: los turnos intermedios no cambian nada (todo vale 0). El primer cambio llega cuando la manzana toca el suelo.</li>
+        <li><b>Entrená 100 frutas</b> y evaluá otra vez. Mirá en “Estrategia aprendida”, fila 5, si ya aparecen flechas hacia la manzana.</li>
+        <li>Entrená <b>100 más</b> y evaluá de nuevo. Compará las tres evaluaciones: son las mismas manzanas.</li>
+        <li>Mirá la fila 1: es la que más tarda en aprender, porque el premio tiene que viajar 5 turnos hacia atrás.</li>
+        <li>Muchas casillas de la estrategia quedan en “?” para siempre, y es normal: son situaciones que nunca ocurren. Por ejemplo, en la fila 1 la canasta siempre está en C.</li>
+      </ol>
+    </div>
+  </section>
+
+  <footer>Funciona sin internet ni servicios externos. Cada número de esta página sale de manzanas que la IA jugó en tu navegador.</footer>
+</div>
+
+<script>
+// CORE-START
+const COLS = 5, ROWS = 6, LAST = ROWS - 1;
+const ACTIONS = [
+  { n: 'izquierda', s: '←', d: -1 },
+  { n: 'quedarse', s: '•', d: 0 },
+  { n: 'derecha', s: '→', d: 1 },
+];
+const REWARD = { catch: 10, miss: -5, step: 0 };
+const ALPHA = 0.5, GAMMA = 0.9;
+const EPS_START = 1, EPS_DECAY = 0.97, EPS_MIN = 0.05;
+const BASKET_START = 2;
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const EVAL_APPLES = (() => { const r = mulberry32(20241); return Array.from({ length: 30 }, () => Math.floor(r() * COLS)); })();
+const EVAL_TIE_SEED = 777;
+
+const sIdx = (st) => (st.b * COLS + st.c) * LAST + st.r;
+const spawn = (col) => ({ b: BASKET_START, c: col, r: 0 });
+
+function envStep(st, a) {
+  const want = st.b + ACTIONS[a].d;
+  const b = Math.min(COLS - 1, Math.max(0, want));
+  const r = st.r + 1;
+  const next = { b, c: st.c, r };
+  if (r === LAST) {
+    const caught = b === st.c;
+    return { st: next, reward: caught ? REWARD.catch : REWARD.miss, event: caught ? 'catch' : 'miss', done: true, blocked: want !== b };
+  }
+  return { st: next, reward: REWARD.step, event: 'fall', done: false, blocked: want !== b };
+}
+function newAgent(rng) {
+  return { Q: new Float64Array(COLS * COLS * LAST * 3), eps: EPS_START, st: spawn(Math.floor(rng() * COLS)), apples: [], turn: 0 };
+}
+function maxQ(Q, s) { return Math.max(Q[s * 3], Q[s * 3 + 1], Q[s * 3 + 2]); }
+function bestActions(Q, s) { const m = maxQ(Q, s); return [0, 1, 2].filter((a) => Q[s * 3 + a] === m); }
+function greedy(Q, s, rng) { const b = bestActions(Q, s); return { a: b[Math.floor(rng() * b.length)], tied: b }; }
+
+function trainStep(ag, rng) {
+  const from = ag.st, s = sIdx(from), eps = ag.eps;
+  const roll = rng();
+  let a, explore, tied = null;
+  if (roll < eps) { explore = true; a = Math.floor(rng() * 3); }
+  else { explore = false; const g = greedy(ag.Q, s, rng); a = g.a; tied = g.tied; }
+  const valuesBefore = Array.from(ag.Q.slice(s * 3, s * 3 + 3));
+  const res = envStep(from, a);
+  ag.turn++;
+  const before = ag.Q[s * 3 + a];
+  const maxNext = res.done ? 0 : maxQ(ag.Q, sIdx(res.st));
+  const target = res.reward + (res.done ? 0 : GAMMA * maxNext);
+  const after = before + ALPHA * (target - before);
+  ag.Q[s * 3 + a] = after;
+  const rec = { kind: 'train', apple: ag.apples.length + 1, turn: ag.turn, from, to: res.st, a, explore, roll, eps, tied, valuesBefore,
+    valuesAfter: Array.from(ag.Q.slice(s * 3, s * 3 + 3)), reward: res.reward, event: res.event, blocked: res.blocked, done: res.done, before, after, maxNext, target };
+  if (res.done) {
+    ag.apples.push({ n: ag.apples.length + 1, caught: res.event === 'catch', col: from.c });
+    ag.eps = Math.max(EPS_MIN, ag.eps * EPS_DECAY);
+    ag.st = spawn(Math.floor(rng() * COLS));
+    ag.turn = 0;
+  } else {
+    ag.st = res.st;
+  }
+  return rec;
+}
+function newEval() { return { i: 0, st: spawn(EVAL_APPLES[0]), tieRng: mulberry32(EVAL_TIE_SEED), results: [], done: false }; }
+function evalStep(Q, ev) {
+  const from = ev.st, s = sIdx(from);
+  const g = greedy(Q, s, ev.tieRng);
+  const res = envStep(from, g.a);
+  const rec = { kind: 'eval', appleIdx: ev.i, from, to: res.st, a: g.a, tied: g.tied, values: Array.from(Q.slice(s * 3, s * 3 + 3)), reward: res.reward, event: res.event, blocked: res.blocked, done: res.done };
+  if (res.done) {
+    ev.results.push(res.event === 'catch');
+    ev.i++;
+    if (ev.i >= EVAL_APPLES.length) ev.done = true;
+    else ev.st = spawn(EVAL_APPLES[ev.i]);
+  } else {
+    ev.st = res.st;
+  }
+  return rec;
+}
+// CORE-END
+
+const SPEEDS = [1, 2, 4, 8, 15, 30, 60];
+const $ = (id) => document.getElementById(id);
+const colName = (c) => 'ABCDE'[c];
+const f2 = (v) => (Math.abs(v) < 0.005 ? 0 : v).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const sgn = (v) => (v > 0 ? '+' : '') + f2(v);
+const cls = (v) => (v > 0.005 ? 'pos' : v < -0.005 ? 'neg' : '');
+const actName = (a) => `${ACTIONS[a].s} ${ACTIONS[a].n}`;
+
+let ag = newAgent(Math.random);
+let mode = 'idle';
+let lastRec = null, recent = [];
+let display = { ...ag.st };
+let landing = null;
+let ev = null, evalSnapshot = null, evals = [];
+let policyRow = 0;
+
+// ---------- tablero ----------
+const board = $('board');
+const cells = [];
+for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+  const el = document.createElement('div');
+  el.className = 'cell' + (r === LAST ? ' ground' : '');
+  board.appendChild(el); cells.push(el);
+}
+function renderBoard() {
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const el = cells[r * COLS + c];
+    el.classList.toggle('apple-col', c === display.c);
+    const apple = display.r === r && display.c === c;
+    const basket = r === LAST && display.b === c;
+    el.innerHTML = apple && basket ? '<span class="both"><span class="a">🍎</span>🧺</span>' : apple ? '🍎' : basket ? '🧺' : '';
+  }
+  const t = display.r;
+  $('turn').textContent = mode === 'eval' && ev
+    ? `Evaluación · manzana ${Math.min(ev.i + 1, 30)} de 30`
+    : display.r === LAST ? 'La manzana llegó al suelo.' : `Manzana ${ag.apples.length + 1} · turno ${t + 1} de ${LAST} · le quedan ${LAST - t} ${LAST - t === 1 ? 'turno' : 'turnos'} para llegar`;
+}
+function setBanner(rec) {
+  const b = $('banner');
+  if (!rec || !rec.done) return;
+  const who = rec.kind === 'eval' ? `Evaluación, manzana ${rec.appleIdx + 1}` : `Manzana ${rec.apple}`;
+  b.className = 'banner ' + (rec.event === 'catch' ? 'catch' : 'miss');
+  b.textContent = rec.event === 'catch'
+    ? `${who}: ¡atrapada en la columna ${colName(rec.to.c)}! ${sgn(rec.reward)}`
+    : `${who}: perdida. Cayó en ${colName(rec.to.c)} y la canasta estaba en ${colName(rec.to.b)}. ${sgn(rec.reward)}`;
+  void b.offsetWidth; b.classList.add('pop');
+}
+
+// ---------- barras ----------
+function barsHtml(values, opts = {}) {
+  const best = values.every((v) => v === values[0]) ? [] : [0, 1, 2].filter((a) => values[a] === Math.max(...values));
+  return [0, 1, 2].map((a) => {
+    const v = values[a];
+    const w = Math.min(1, Math.abs(v) / 10) * 50;
+    const mark = opts.chosen === a && opts.before !== undefined
+      ? `<span class="mark" style="left:calc(${50 + Math.max(-1, Math.min(1, opts.before / 10)) * 50}% - 1px)" title="antes"></span>` : '';
+    return `<div class="bar${best.includes(a) ? ' best' : ''}${opts.chosen === a ? ' chosen' : ''}">
+      <span class="lbl">${actName(a)}</span>
+      <span class="track"><span class="fill ${v >= 0 ? 'p' : 'n'}" style="width:${w.toFixed(1)}%"></span>${mark}</span>
+      <span class="val ${cls(v)}">${f2(v)}</span></div>`;
+  }).join('');
+}
+function obsChips(st) {
+  return `<span class="chip">Canasta: columna <b>${colName(st.b)}</b></span>
+    <span class="chip">Manzana: columna <b>${colName(st.c)}</b></span>
+    <span class="chip">Manzana: fila <b>${st.r + 1}</b> de ${ROWS}</span>`;
+}
+function renderObs() {
+  const st = mode === 'eval' && ev && !ev.done ? ev.st : ag.st;
+  const s = sIdx(st), vals = Array.from(ag.Q.slice(s * 3, s * 3 + 3));
+  $('obs-chips').innerHTML = obsChips(st);
+  $('bars-now').innerHTML = barsHtml(vals);
+  const best = bestActions(ag.Q, s);
+  $('obs-hint').textContent = best.length === 3
+    ? 'Los tres valores son iguales: si usa lo aprendido, va a sortear entre las tres acciones.'
+    : `Si usa lo aprendido, va a elegir ${best.map((a) => ACTIONS[a].n).join(' o ')}${best.length > 1 ? ' (empatan; sortea)' : ''}.` + (mode !== 'eval' ? ` Pero con ε = ${f2(ag.eps)} puede explorar al azar.` : '');
+}
+
+// ---------- detalle del turno ----------
+function moveText(rec) {
+  const m = ACTIONS[rec.a];
+  if (rec.blocked) return `Quiso ir a la ${m.n} pero ya estaba en el borde, así que la canasta se quedó en ${colName(rec.to.b)}.`;
+  if (m.d === 0) return `La canasta se quedó en ${colName(rec.to.b)}.`;
+  return `La canasta se movió de ${colName(rec.from.b)} a ${colName(rec.to.b)}.`;
+}
+function fallText(rec) {
+  if (rec.event === 'catch') return `La manzana bajó al suelo en ${colName(rec.to.c)} y cayó justo en la canasta: ¡atrapada!`;
+  if (rec.event === 'miss') return `La manzana bajó al suelo en ${colName(rec.to.c)}, pero la canasta estaba en ${colName(rec.to.b)}: perdida.`;
+  return `La manzana bajó a la fila ${rec.to.r + 1}.`;
+}
+function renderStep() {
+  const rec = lastRec;
+  if (!rec) { $('step-idx').textContent = ''; $('step-body').innerHTML = '<p class="empty">Todavía no hubo turnos. Apretá <b>Un paso</b> para ver uno.</p>'; return; }
+  const rewardTxt = `<span class="num ${cls(rec.reward)}">${sgn(rec.reward)}</span> (${rec.event === 'catch' ? 'atrapada' : rec.event === 'miss' ? 'perdida' : 'turno intermedio'})`;
+  if (rec.kind === 'eval') {
+    $('step-idx').textContent = `Evaluación · manzana ${rec.appleIdx + 1}`;
+    const why = rec.tied.length > 1
+      ? `${rec.tied.length === 3 ? 'Las tres acciones' : 'Varias acciones'} empataban, así que sorteó y salió ${actName(rec.a)}.`
+      : `Eligió ${actName(rec.a)} porque tenía el mayor valor (${f2(rec.values[rec.a])}).`;
+    $('step-body').innerHTML = `
+      <div class="chips">${obsChips(rec.from)}</div>
+      <div class="bars">${barsHtml(rec.values, { chosen: rec.a })}</div>
+      <dl class="facts">
+        <dt>Acción</dt><dd>${actName(rec.a)}</dd>
+        <dt>Modo</dt><dd><span class="pill exploit">Evaluación: usa lo aprendido, sin explorar</span></dd>
+        <dt>Recompensa</dt><dd>${rewardTxt}</dd>
+        <dt>Valor Q</dt><dd>Sin cambios: la evaluación no modifica la tabla.</dd>
+      </dl>
+      <div class="explain"><p>${why} ${moveText(rec)} ${fallText(rec)}</p></div>`;
+    return;
+  }
+  $('step-idx').textContent = `Manzana ${rec.apple} · turno ${rec.turn}`;
+  let how;
+  if (rec.explore) how = `Estaba <b>explorando</b>: sorteó ${f2(rec.roll)}, menor que ε = ${f2(rec.eps)}, así que eligió al azar: ${actName(rec.a)}.`;
+  else if (rec.tied.length > 1) how = `<b>Usó lo aprendido</b> (sorteó ${f2(rec.roll)}, no menor que ε = ${f2(rec.eps)}), pero ${rec.tied.length === 3 ? 'las tres acciones' : 'varias acciones'} empataban con ${f2(rec.before)}; sorteó entre ellas: ${actName(rec.a)}.`;
+  else how = `<b>Usó lo aprendido</b> (sorteó ${f2(rec.roll)}, no menor que ε = ${f2(rec.eps)}): ${actName(rec.a)} tenía el mayor valor (${f2(rec.before)}).`;
+  const target = rec.done
+    ? `La manzana terminó, así que no hay valor futuro: el objetivo es solo la recompensa, ${sgn(rec.reward)}.`
+    : `Recompensa 0 por ahora. En la situación nueva (canasta ${colName(rec.to.b)}, manzana ${colName(rec.to.c)} fila ${rec.to.r + 1}) lo mejor que conoce vale ${f2(rec.maxNext)}. Objetivo = 0 + 0,9 × ${f2(rec.maxNext)} = ${f2(rec.target)}.`;
+  const diff = rec.after - rec.before;
+  const verdict = Math.abs(diff) < 1e-9
+    ? (rec.target === 0 && rec.before === 0 ? 'Todavía no sabe nada de lo que viene, así que el valor sigue en 0.' : 'El valor ya coincidía con el objetivo y no cambió.')
+    : diff > 0 ? `Subió: “${ACTIONS[rec.a].n}” en esa situación ahora parece mejor.` : `Bajó: “${ACTIONS[rec.a].n}” en esa situación ahora parece peor.`;
+  $('step-body').innerHTML = `
+    <div class="chips">${obsChips(rec.from)}</div>
+    <div class="bars">${barsHtml(rec.valuesAfter, { chosen: rec.a, before: rec.before })}</div>
+    <p class="hint">Barras ya actualizadas. La rayita vertical marca dónde estaba antes el valor de la acción elegida (◀).</p>
+    <dl class="facts">
+      <dt>Acción</dt><dd>${actName(rec.a)}</dd>
+      <dt>Modo</dt><dd>${rec.explore ? '<span class="pill explore">Explorando (al azar)</span>' : '<span class="pill exploit">Usando lo aprendido</span>'}</dd>
+      <dt>Recompensa</dt><dd>${rewardTxt}</dd>
+      <dt>Valor Q</dt><dd>Q(${ACTIONS[rec.a].n}): <span class="num ${cls(rec.before)}">${f2(rec.before)}</span> → <span class="num ${cls(rec.after)}">${f2(rec.after)}</span></dd>
+    </dl>
+    <div class="formula">Q nuevo = ${f2(rec.before)} + 0,5 × (${f2(rec.target)} − ${f2(rec.before)}) = ${f2(rec.after)}</div>
+    <div class="explain"><p>${how} ${moveText(rec)} ${fallText(rec)}</p><p>${target} ${verdict}</p></div>`;
+}
+function pushRecent(rec) {
+  const st = `can ${colName(rec.from.b)} · 🍎 ${colName(rec.from.c)}${rec.from.r + 1}`;
+  recent.unshift(rec.kind === 'eval'
+    ? `eval ${rec.appleIdx + 1}: ${st} ${ACTIONS[rec.a].s} ${sgn(rec.reward)} · sin cambios`
+    : `${rec.apple}.${rec.turn}: ${st} ${ACTIONS[rec.a].s} ${rec.explore ? 'azar' : 'aprendido'} ${sgn(rec.reward)} · Q ${f2(rec.before)}→${f2(rec.after)}`);
+  recent = recent.slice(0, 6);
+}
+function renderRecent() { $('recent').innerHTML = recent.map((l) => `<li>${l}</li>`).join(''); }
+
+// ---------- marcador ----------
+function renderScore() {
+  const ap = ag.apples;
+  const c = ap.filter((x) => x.caught).length;
+  $('st-c').textContent = c;
+  $('st-m').textContent = ap.length - c;
+  $('st-e').textContent = f2(ag.eps);
+  const last = ap.slice(-50);
+  if (last.length) {
+    const lc = last.filter((x) => x.caught).length;
+    $('st-p').textContent = Math.round(lc / last.length * 100) + ' %';
+    $('st-ps').textContent = last.length < 50 ? `${lc} de ${last.length} (solo hay ${last.length} intentos)` : `${lc} de 50`;
+  } else { $('st-p').textContent = '–'; $('st-ps').textContent = 'sin intentos'; }
+  $('dots').innerHTML = last.map((x) => `<span class="dot ${x.caught ? 'c' : 'm'}" title="Manzana ${x.n}: ${x.caught ? 'atrapada' : 'perdida'}"></span>`).join('');
+}
+
+// ---------- estrategia ----------
+function renderPolicy() {
+  let h = `<thead><tr><th>Canasta ↓ / Manzana →</th>${[0, 1, 2, 3, 4].map((c) => `<th>${colName(c)}</th>`).join('')}</tr></thead><tbody>`;
+  for (let b = 0; b < COLS; b++) {
+    h += `<tr><th>${colName(b)}</th>`;
+    for (let c = 0; c < COLS; c++) {
+      const s = sIdx({ b, c, r: policyRow });
+      const best = bestActions(ag.Q, s);
+      const none = best.length === 3;
+      h += `<td class="${b === c ? 'diag' : ''}${none ? ' none' : ''}" title="Canasta ${colName(b)}, manzana ${colName(c)}">${none ? '?' : best.map((a) => ACTIONS[a].s).join('')}</td>`;
+    }
+    h += '</tr>';
+  }
+  $('policy').innerHTML = h + '</tbody>';
+}
+
+// ---------- evaluaciones ----------
+function renderEvals() {
+  if (!evals.length) return;
+  $('evals').innerHTML = evals.map((e, i) => `
+    <li><span class="t">Evaluación ${i + 1} · después de <b>${e.trained}</b> manzanas de entrenamiento: <b>${e.caught} de 30</b> (${Math.round(e.caught / 30 * 100)} %)${e.same ? ' · tabla Q sin cambios ✓' : ' · ⚠ la tabla cambió'}</span>
+    <span class="dots">${e.results.map((x, j) => `<span class="dot ${x ? 'c' : 'm'}" title="Manzana ${j + 1} (columna ${colName(EVAL_APPLES[j])}): ${x ? 'atrapada' : 'perdida'}"></span>`).join('')}</span></li>`).reverse().join('');
+}
+
+function renderAll() { renderBoard(); renderObs(); renderStep(); renderRecent(); renderScore(); renderPolicy(); renderEvals(); }
+
+// ---------- acciones ----------
+function doTrainStep() {
+  const rec = trainStep(ag, Math.random);
+  lastRec = rec; pushRecent(rec);
+  display = rec.done ? { ...rec.to } : { ...ag.st };
+  if (rec.done) setBanner(rec);
+  return rec;
+}
+const setStatus = (h) => { $('status').innerHTML = h; };
+function setMode(m) {
+  mode = m;
+  $('btn-step').disabled = m !== 'idle';
+  $('btn-auto').disabled = !(m === 'idle' || m === 'auto');
+  $('btn-auto').textContent = m === 'auto' ? 'Pausar' : 'Entrenar automáticamente';
+  $('btn-batch').disabled = !(m === 'idle' || m === 'batch');
+  $('btn-batch').textContent = m === 'batch' ? 'Detener' : 'Entrenar 100 frutas';
+  $('btn-eval').disabled = !(m === 'idle' || m === 'eval');
+  $('btn-eval').textContent = m === 'eval' ? 'Detener evaluación' : 'Evaluar 30 frutas';
+  $('btn-reset').disabled = m !== 'idle';
+}
+let lastT = 0, acc = 0;
+function startTimer() { lastT = 0; acc = 1; requestAnimationFrame(tick); }
+function tick(t) {
+  if (mode !== 'auto' && mode !== 'eval') return;
+  if (!lastT) lastT = t;
+  acc += (t - lastT) / 1000 * SPEEDS[+$('in-speed').value];
+  lastT = t;
+  let n = Math.min(Math.floor(acc), 30);
+  acc -= Math.floor(acc);
+  // Si la manzana anterior acaba de caer, mostrar ese cuadro un turno antes de seguir
+  while (n-- > 0) {
+    if (display.r === LAST && mode === 'auto') { display = { ...ag.st }; continue; }
+    if (display.r === LAST && mode === 'eval') { display = { ...ev.st }; continue; }
+    if (mode === 'auto') doTrainStep();
+    else if (mode === 'eval' && runEvalStep()) break;
+  }
+  if (mode === 'auto') setStatus(`Entrenando… manzana <b>${ag.apples.length + 1}</b>.`);
+  renderAll();
+  if (mode === 'auto' || mode === 'eval') requestAnimationFrame(tick);
+}
+$('btn-step').addEventListener('click', () => {
+  if (display.r === LAST) display = { ...ag.st };
+  const rec = doTrainStep();
+  setStatus(rec.done ? `Manzana ${rec.apple} terminada. El próximo paso empieza con una manzana nueva.` : 'Turno hecho. Mirá a la derecha qué valor cambió.');
+  renderAll();
+});
+$('btn-auto').addEventListener('click', () => {
+  if (mode === 'auto') { setMode('idle'); setStatus('En pausa.'); renderAll(); return; }
+  setMode('auto'); startTimer();
+});
+$('in-speed').addEventListener('input', (e) => {
+  const v = SPEEDS[+e.target.value];
+  $('out-speed').textContent = v + (v === 1 ? ' turno por segundo' : ' turnos por segundo');
+});
+$('btn-batch').addEventListener('click', () => {
+  if (mode === 'batch') { setMode('idle'); setStatus(`Detenido con ${ag.apples.length} manzanas entrenadas.`); renderAll(); return; }
+  setMode('batch');
+  const start = ag.apples.length, target = start + 100;
+  const chunk = () => {
+    if (mode !== 'batch') return;
+    const t0 = performance.now();
+    while (ag.apples.length < target && performance.now() - t0 < 12) doTrainStep();
+    setStatus(`Entrenando en bloque… <b>${ag.apples.length - start}</b> de 100 manzanas.`);
+    renderAll();
+    if (ag.apples.length < target) setTimeout(chunk, 0);
+    else { display = { ...ag.st }; setMode('idle'); setStatus(`Listo: 100 manzanas más (${ag.apples.length} en total). Probá “Evaluar 30 frutas”.`); renderAll(); }
+  };
+  setTimeout(chunk, 0);
+});
+function runEvalStep() {
+  const rec = evalStep(ag.Q, ev);
+  lastRec = rec; pushRecent(rec);
+  display = rec.done ? { ...rec.to } : { ...ev.st };
+  if (rec.done) setBanner(rec);
+  if (ev.done) { finishEval(false); return true; }
+  return false;
+}
+function finishEval(stopped) {
+  let same = true;
+  for (let i = 0; i < ag.Q.length; i++) if (ag.Q[i] !== evalSnapshot[i]) { same = false; break; }
+  if (!stopped) {
+    const caught = ev.results.filter(Boolean).length;
+    evals.push({ trained: ag.apples.length, caught, results: ev.results.slice(), same });
+    setStatus(`Evaluación terminada: <b>${caught} de 30</b> atrapadas. ${same ? 'Comprobado: los 375 valores Q quedaron idénticos ✓' : '⚠ La tabla Q cambió.'}`);
+  } else {
+    setStatus(`Evaluación detenida en la manzana ${ev.i + 1}; no se guarda en la lista. ${same ? 'La tabla Q no cambió ✓' : ''}`);
+  }
+  ev = null;
+  setMode('idle');
+  display = { ...ag.st };
+  renderAll();
+}
+$('btn-eval').addEventListener('click', () => {
+  if (mode === 'eval') { finishEval(true); return; }
+  ev = newEval();
+  evalSnapshot = Float64Array.from(ag.Q);
+  display = { ...ev.st };
+  setMode('eval');
+  setStatus('Evaluando las 30 manzanas fijas: sin exploración y sin modificar la tabla Q. Subí la velocidad si querés que vaya más rápido.');
+  renderAll();
+  startTimer();
+});
+$('btn-reset').addEventListener('click', () => {
+  ag = newAgent(Math.random); lastRec = null; recent = []; display = { ...ag.st };
+  $('banner').className = 'banner'; $('banner').textContent = 'Aprendizaje borrado. Todavía no cayó ninguna manzana.';
+  setStatus('Aprendizaje borrado: los 375 valores Q volvieron a cero y ε a 1. Las evaluaciones anteriores quedan en la lista para comparar.');
+  renderAll();
+});
+$('seg-row').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  policyRow = +b.dataset.r;
+  for (const x of $('seg-row').children) x.setAttribute('aria-pressed', String(x === b));
+  renderPolicy();
+});
+
+setMode('idle');
+renderAll();
+</script>
+</body>
+</html>

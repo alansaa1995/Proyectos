@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ratón en el laberinto</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: tablero y controles a la izquierda, "lo que pasó en este paso" y los valores Q a la derecha; gráfico y explicaciones debajo */
+:root {
+  --bg: #f2f4ef;
+  --surface: #ffffff;
+  --sunken: #e7ebe3;
+  --ink: #1c2420;
+  --muted: #5a665f;
+  --line: #d5dbd2;
+  --wall: #3a433e;
+  --good: #23874a;
+  --good-soft: #dcf1e3;
+  --bad: #c43d2c;
+  --bad-soft: #fae0dc;
+  --cheese: #d99a00;
+  --explore: #b8650a;
+  --explore-soft: #fbead3;
+  --exploit: #2b62c4;
+  --exploit-soft: #dde8fb;
+  --neutral: #8a948e;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  --font-body: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-num: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  --radius: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111513; --surface: #1a201d; --sunken: #232b27; --ink: #e8eee9; --muted: #9eaaa3; --line: #303a35;
+    --wall: #4d5852; --good: #4cc77c; --good-soft: #163525; --bad: #ff7a68; --bad-soft: #43201b; --cheese: #ffc23d;
+    --explore: #f2a24a; --explore-soft: #3d2b14; --exploit: #78a6ff; --exploit-soft: #1b2a47; --neutral: #79847e;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111513; --surface: #1a201d; --sunken: #232b27; --ink: #e8eee9; --muted: #9eaaa3; --line: #303a35;
+  --wall: #4d5852; --good: #4cc77c; --good-soft: #163525; --bad: #ff7a68; --bad-soft: #43201b; --cheese: #ffc23d;
+  --explore: #f2a24a; --explore-soft: #3d2b14; --exploit: #78a6ff; --exploit-soft: #1b2a47; --neutral: #79847e;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 48px;
+}
+.wrap { max-width: 1140px; margin: 0 auto; display: grid; gap: 22px; }
+h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(1.9rem, 5vw, 2.6rem); line-height: 1.05; font-weight: 800; letter-spacing: -0.015em; }
+h2 { font-size: 1.25rem; font-weight: 750; }
+h3 { font-size: 1rem; font-weight: 700; }
+p { margin: 0; }
+header { display: grid; gap: 8px; }
+.eyebrow { font-size: 0.76rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--good); }
+.lede { color: var(--muted); max-width: 66ch; font-size: 1.04rem; }
+.lede b { color: var(--ink); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+
+.main { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .main { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; } }
+.left, .right { display: grid; gap: 14px; min-width: 0; }
+
+/* Tablero */
+.board-card { padding: 14px; display: grid; gap: 10px; }
+.board-frame { display: grid; grid-template-columns: 1.4em minmax(0, 1fr); grid-template-rows: 1.4em auto; gap: 4px; max-width: 470px; width: 100%; justify-self: center; }
+.cols { grid-column: 2; display: grid; grid-template-columns: repeat(5, 1fr); text-align: center; font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+.rows { grid-row: 2; display: grid; grid-template-rows: repeat(5, 1fr); align-items: center; text-align: center; font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+.board { grid-column: 2; grid-row: 2; position: relative; display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; aspect-ratio: 1; max-width: 100%; }
+.cell {
+  position: relative; border-radius: 8px; background: var(--sunken); border: 2px solid transparent;
+  display: grid; place-items: center; overflow: hidden; cursor: pointer; padding: 0; font: inherit; color: var(--ink);
+}
+.cell .tint { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+.cell .arrow { position: relative; font-size: clamp(1.2rem, 5.5vw, 1.8rem); line-height: 1; font-weight: 700; }
+.cell .val { position: absolute; bottom: 3px; left: 0; right: 0; text-align: center; font-family: var(--font-num); font-size: clamp(0.56rem, 2.2vw, 0.7rem); color: var(--muted); }
+.cell .tag { position: absolute; top: 3px; left: 5px; font-size: clamp(0.52rem, 2vw, 0.66rem); font-weight: 700; color: var(--good); text-transform: uppercase; letter-spacing: 0.04em; }
+.cell.wall { background: var(--wall); cursor: default; }
+.cell.trap, .cell.cheese { font-size: clamp(1.4rem, 6vw, 2rem); }
+.cell.trap { background: var(--bad-soft); }
+.cell.cheese { background: color-mix(in srgb, var(--cheese) 22%, var(--surface)); }
+.cell.sel { border-color: var(--ink); }
+.cell.from { box-shadow: inset 0 0 0 2px var(--exploit); }
+.cell .muted-arrow { color: var(--neutral); }
+.mouse {
+  position: absolute; left: 0; top: 0; width: calc((100% - 16px) / 5); height: calc((100% - 16px) / 5);
+  display: grid; place-items: center; pointer-events: none; transition: transform 0.16s ease;
+  font-size: clamp(1.6rem, 7vw, 2.4rem); z-index: 2; filter: drop-shadow(0 2px 2px rgba(0,0,0,0.25));
+}
+@media (prefers-reduced-motion: reduce) { .mouse { transition: none; } }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.82rem; color: var(--muted); justify-content: center; }
+.legend span { display: inline-flex; gap: 5px; align-items: center; }
+.sq { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.sq.wall { background: var(--wall); } .sq.good { background: var(--good); opacity: 0.6; } .sq.bad { background: var(--bad); opacity: 0.6; }
+
+/* Controles */
+.controls { padding: 14px; display: grid; gap: 12px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn {
+  font: inherit; font-weight: 650; font-size: 0.95rem; cursor: pointer; padding: 9px 14px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--sunken); color: var(--ink);
+}
+.btn:hover:not(:disabled) { border-color: var(--muted); }
+.btn.primary { background: var(--good); border-color: var(--good); color: var(--surface); }
+.btn.test { background: var(--exploit); border-color: var(--exploit); color: var(--surface); }
+.btn.danger { background: transparent; color: var(--bad); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+:focus-visible { outline: 3px solid var(--cheese); outline-offset: 2px; }
+.speed { display: grid; gap: 2px; }
+.speed-head { display: flex; justify-content: space-between; font-size: 0.9rem; }
+.speed-head output { font-family: var(--font-num); font-size: 0.85rem; }
+input[type="range"] { width: 100%; accent-color: var(--good); }
+.statusline { font-size: 0.9rem; color: var(--muted); min-height: 1.5em; }
+.statusline b { color: var(--ink); }
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+@media (max-width: 460px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.stat { background: var(--surface); padding: 8px 10px; display: grid; }
+.stat .k { font-size: 0.74rem; color: var(--muted); }
+.stat .v { font-family: var(--font-num); font-size: 1.05rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Paso */
+.step { padding: 16px; display: grid; gap: 12px; }
+.step-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.step-head .idx { font-family: var(--font-num); font-size: 0.85rem; color: var(--muted); }
+.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; font-size: 0.95rem; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; font-weight: 600; min-width: 0; }
+.pill { display: inline-block; font-size: 0.82rem; font-weight: 700; padding: 2px 10px; border-radius: 999px; }
+.pill.explore { background: var(--explore-soft); color: var(--explore); }
+.pill.exploit { background: var(--exploit-soft); color: var(--exploit); }
+.pill.testp { background: var(--exploit-soft); color: var(--exploit); }
+.pos { color: var(--good); } .neg { color: var(--bad); }
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.formula { font-family: var(--font-num); font-size: 0.82rem; background: var(--sunken); border-radius: 8px; padding: 8px 10px; overflow-x: auto; white-space: nowrap; }
+.explain { background: var(--good-soft); border-radius: 10px; padding: 10px 12px; font-size: 0.95rem; display: grid; gap: 6px; }
+.recent { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; font-size: 0.82rem; font-family: var(--font-num); color: var(--muted); }
+.recent li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent li:first-child { color: var(--ink); }
+.empty { color: var(--muted); font-size: 0.94rem; }
+
+/* Valores Q */
+.qcard { padding: 16px; display: grid; gap: 12px; }
+.compass { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-areas: ". up ." "left center right" ". down ."; gap: 6px; max-width: 380px; width: 100%; justify-self: center; }
+.cq { border: 2px solid var(--line); border-radius: 10px; padding: 6px 4px; text-align: center; display: grid; gap: 0; background: var(--surface); }
+.cq .ar { font-size: 1.2rem; line-height: 1.1; font-weight: 700; }
+.cq .nm { font-size: 0.74rem; color: var(--muted); }
+.cq .qv { font-family: var(--font-num); font-weight: 600; font-size: 0.98rem; }
+.cq .ch { font-family: var(--font-num); font-size: 0.7rem; color: var(--muted); }
+.cq.best { border-color: var(--good); }
+.cq.changed { background: var(--explore-soft); }
+.cq.up { grid-area: up; } .cq.left { grid-area: left; } .cq.right { grid-area: right; } .cq.down { grid-area: down; }
+.cq.center { grid-area: center; border: 0; background: var(--sunken); display: grid; place-items: center; font-weight: 700; font-size: 1.05rem; }
+.hint { font-size: 0.84rem; color: var(--muted); }
+
+/* Gráfico */
+.chart-card { padding: 16px; display: grid; gap: 10px; }
+.chart-box { width: 100%; height: 230px; }
+canvas { display: block; width: 100%; height: 100%; }
+.legend2 { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.84rem; color: var(--muted); }
+.legend2 span { display: inline-flex; gap: 6px; align-items: center; }
+.sq.ok { background: var(--good); } .sq.trapc { background: var(--bad); } .sq.lim { background: var(--neutral); }
+
+/* Explicaciones */
+.learn { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.learn .card { padding: 16px; display: grid; gap: 8px; align-content: start; }
+.learn p, .learn li { color: var(--muted); font-size: 0.95rem; }
+.learn b { color: var(--ink); }
+.learn ul { margin: 0; padding-left: 20px; display: grid; gap: 5px; }
+footer { font-size: 0.86rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Aprendizaje por refuerzo · Q-learning</span>
+    <h1>Ratón en el laberinto</h1>
+    <p class="lede">El ratón no conoce el mapa. Prueba direcciones, recibe premios y castigos, y anota en una <b>tabla Q</b> cuánto le conviene cada movimiento. Apretá <b>Un paso</b> para ver un movimiento por vez, o entrenalo y mirá cómo aparecen las flechas.</p>
+  </header>
+
+  <div class="main">
+    <div class="left">
+      <section class="board-card card" aria-label="Laberinto">
+        <div class="board-frame">
+          <div class="cols"><span>A</span><span>B</span><span>C</span><span>D</span><span>E</span></div>
+          <div class="rows"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span></div>
+          <div class="board" id="board"><div class="mouse" id="mouse" aria-hidden="true">🐭</div></div>
+        </div>
+        <div class="legend">
+          <span>🧀 queso +10</span><span>🪤 trampa −5</span><span><i class="sq wall"></i>pared −1</span><span>paso −0,1</span>
+          <span><i class="sq good"></i>valor alto</span><span><i class="sq bad"></i>valor bajo</span><span>· sin preferencia</span>
+        </div>
+        <p class="hint" style="text-align:center">Tocá una casilla para ver sus cuatro valores Q. La flecha marca la dirección con mayor valor aprendido.</p>
+      </section>
+
+      <section class="controls card" aria-label="Controles">
+        <div class="row">
+          <button class="btn" type="button" id="btn-step">Un paso</button>
+          <button class="btn primary" type="button" id="btn-auto">Entrenar automáticamente</button>
+          <button class="btn" type="button" id="btn-batch">Entrenar 100 intentos</button>
+        </div>
+        <div class="speed">
+          <div class="speed-head"><label for="in-speed">Velocidad</label><output id="out-speed">4 pasos por segundo</output></div>
+          <input type="range" id="in-speed" min="0" max="6" step="1" value="2">
+        </div>
+        <div class="row">
+          <button class="btn test" type="button" id="btn-test">Probar lo aprendido</button>
+          <button class="btn danger" type="button" id="btn-reset">Borrar aprendizaje</button>
+        </div>
+        <p class="statusline" id="status" aria-live="polite">Listo. La tabla Q está toda en cero: el ratón todavía no sabe nada.</p>
+        <div class="stats">
+          <div class="stat"><span class="k">Intentos terminados</span><span class="v" id="st-eps">0</span></div>
+          <div class="stat"><span class="k">Llegó al queso</span><span class="v" id="st-ok">0</span></div>
+          <div class="stat"><span class="k">Paso del intento actual</span><span class="v" id="st-step">0</span></div>
+          <div class="stat"><span class="k">Exploración ε</span><span class="v" id="st-epsv">1,00</span></div>
+        </div>
+      </section>
+    </div>
+
+    <div class="right">
+      <section class="step card" aria-label="Último paso">
+        <div class="step-head"><h2>Qué pasó en este paso</h2><span class="idx" id="step-idx"></span></div>
+        <div id="step-body"><p class="empty">Todavía no hubo ningún paso. Apretá <b>Un paso</b> y acá vas a ver qué hizo el ratón y qué número de la tabla cambió.</p></div>
+        <ol class="recent" id="recent" aria-label="Pasos recientes"></ol>
+      </section>
+
+      <section class="qcard card" aria-label="Valores Q de la casilla elegida">
+        <div class="step-head"><h2>Valores Q de <span id="q-cell">A1</span></h2></div>
+        <div id="q-body"></div>
+        <p class="hint">Cada número estima cuánta recompensa total espera juntar el ratón si desde esta casilla va en esa dirección y después sigue haciendo lo que mejor sabe. No es un porcentaje: puede ser negativo o mayor que 1. Borde verde = la mejor dirección. Fondo naranja = el valor que cambió en el último paso.</p>
+      </section>
+    </div>
+  </div>
+
+  <section class="chart-card card" aria-label="Movimientos por intento">
+    <div class="step-head"><h2>Movimientos por intento</h2><span class="idx" id="chart-sum"></span></div>
+    <div class="chart-box" id="chart-box"><canvas id="chart"></canvas></div>
+    <div class="legend2">
+      <span><i class="sq ok"></i>Llegó al queso</span>
+      <span><i class="sq trapc"></i>Cayó en una trampa</span>
+      <span><i class="sq lim"></i>Se cortó a los 100 movimientos</span>
+    </div>
+    <p class="hint">Cada barra es un intento de entrenamiento real, en orden. Las pruebas con “Probar lo aprendido” no se cuentan acá.</p>
+  </section>
+
+  <section class="learn">
+    <div class="card">
+      <h3>Qué son los valores Q</h3>
+      <p>Cada casilla tiene <b>4 números, uno por dirección</b>. Q(casilla, dirección) es una <b>estimación de recompensa futura</b>: cuánto espera ganar en total el ratón si va en esa dirección y después sigue lo mejor que sabe.</p>
+      <p><b>No son porcentajes de confianza.</b> Un −3 significa “por acá suele terminar mal”; un 8 significa “por acá llego al queso pronto”. Al principio todos valen 0 porque no sabe nada.</p>
+      <p>Toda la memoria es una <b>tabla de 25 casillas × 4 direcciones</b>. No hay una red neuronal.</p>
+    </div>
+    <div class="card">
+      <h3>La regla que usa en cada paso</h3>
+      <p><b>objetivo = recompensa + 0,9 × (mejor valor de la casilla a la que llegó)</b></p>
+      <p><b>Q nuevo = Q viejo + 0,5 × (objetivo − Q viejo)</b></p>
+      <ul>
+        <li><b>0,5 (α)</b>: corrige la mitad de la diferencia en cada paso.</li>
+        <li><b>0,9 (γ)</b>: lo que viene después vale un poco menos que lo inmediato.</li>
+        <li>Si llegó al queso o a una trampa, el intento terminó: el objetivo es solo la recompensa, sin parte futura.</li>
+        <li><b>Exploración (ε)</b>: empieza en 1 (todo al azar) y se multiplica por 0,97 al terminar cada intento, hasta un mínimo de 0,05. Si varias direcciones empatan, sortea entre ellas.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Qué observar antes de entrenar</h3>
+      <ul>
+        <li>Todas las casillas muestran “·”: no tiene preferencias.</li>
+        <li>Apretá <b>Un paso</b> varias veces: solo cambia el valor de la dirección que usó. Caminar baja a −0,05; chocar una pared, a −0,5.</li>
+        <li>El primer valor positivo aparece cuando toca el queso por casualidad, y solo en la casilla de al lado.</li>
+        <li>En los primeros intentos el gráfico muestra barras altas, rojas o grises.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Qué observar después de entrenar</h3>
+      <ul>
+        <li>El verde se “contagia” hacia atrás desde el queso: cada casilla aprende de la siguiente.</li>
+        <li>Las flechas forman un camino desde Inicio hasta el queso y se alejan de las trampas.</li>
+        <li>Las barras del gráfico bajan y se vuelven verdes. No todas: con ε mínimo de 0,05 a veces sigue explorando.</li>
+        <li><b>Probar lo aprendido</b> recorre el mapa sin explorar y comprueba que la tabla Q quedó igual.</li>
+        <li>Casillas que visitó poco pueden tener flechas raras: ahí casi no tiene datos.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>Funciona sin internet ni servicios externos. Cada número de esta página sale del entrenamiento que corre en tu navegador; nada está precalculado ni hay una ruta programada.</footer>
+</div>
+
+<script>
+// CORE-START
+const MAP = [
+  'S..#.',
+  '.#.T.',
+  '.#...',
+  '.T##.',
+  '....C',
+];
+const N = 5;
+const ACTIONS = [
+  { n: 'arriba', a: '↑', dr: -1, dc: 0 },
+  { n: 'derecha', a: '→', dr: 0, dc: 1 },
+  { n: 'abajo', a: '↓', dr: 1, dc: 0 },
+  { n: 'izquierda', a: '←', dr: 0, dc: -1 },
+];
+const REWARD = { cheese: 10, trap: -5, wall: -1, move: -0.1 };
+const ALPHA = 0.5, GAMMA = 0.9;
+const EPS_START = 1, EPS_DECAY = 0.97, EPS_MIN = 0.05;
+const MAX_STEPS = 100;
+
+const cellAt = (r, c) => MAP[r][c];
+function findCell(ch) { for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (MAP[r][c] === ch) return { r, c }; }
+const START = findCell('S');
+const sIdx = (p) => p.r * N + p.c;
+
+function envStep(pos, a) {
+  const r = pos.r + ACTIONS[a].dr, c = pos.c + ACTIONS[a].dc;
+  if (r < 0 || r >= N || c < 0 || c >= N) return { pos, reward: REWARD.wall, event: 'wall', edge: true, done: false };
+  const ch = cellAt(r, c);
+  if (ch === '#') return { pos, reward: REWARD.wall, event: 'wall', edge: false, done: false };
+  const np = { r, c };
+  if (ch === 'T') return { pos: np, reward: REWARD.trap, event: 'trap', done: true };
+  if (ch === 'C') return { pos: np, reward: REWARD.cheese, event: 'cheese', done: true };
+  return { pos: np, reward: REWARD.move, event: 'move', done: false };
+}
+function newAgent() {
+  return { Q: new Float64Array(N * N * 4), eps: EPS_START, pos: null, stepInEp: 0, episodes: [], totalSteps: 0 };
+}
+function maxQ(Q, s) { return Math.max(Q[s * 4], Q[s * 4 + 1], Q[s * 4 + 2], Q[s * 4 + 3]); }
+function bestActions(Q, s) { const m = maxQ(Q, s); return [0, 1, 2, 3].filter((a) => Q[s * 4 + a] === m); }
+function greedy(Q, s, rng) { const b = bestActions(Q, s); return { a: b[Math.floor(rng() * b.length)], tied: b }; }
+
+function trainStep(ag, rng) {
+  if (!ag.pos) { ag.pos = { ...START }; ag.stepInEp = 0; }
+  const from = ag.pos, s = sIdx(from), eps = ag.eps;
+  const roll = rng();
+  let a, explore, tied = null;
+  if (roll < eps) { explore = true; a = Math.floor(rng() * 4); }
+  else { explore = false; const g = greedy(ag.Q, s, rng); a = g.a; tied = g.tied; }
+  const valuesBefore = Array.from(ag.Q.slice(s * 4, s * 4 + 4));
+  const res = envStep(from, a);
+  ag.stepInEp++; ag.totalSteps++;
+  const before = ag.Q[s * 4 + a];
+  const maxNext = res.done ? 0 : maxQ(ag.Q, sIdx(res.pos));
+  const target = res.reward + (res.done ? 0 : GAMMA * maxNext);
+  const after = before + ALPHA * (target - before);
+  ag.Q[s * 4 + a] = after;
+  const limit = !res.done && ag.stepInEp >= MAX_STEPS;
+  const rec = {
+    kind: 'train', episode: ag.episodes.length + 1, step: ag.stepInEp, from, to: res.pos, a, explore, roll, eps, tied, valuesBefore,
+    reward: res.reward, event: res.event, edge: res.edge, done: res.done, limit, before, after, maxNext, target,
+  };
+  if (res.done || limit) {
+    ag.episodes.push({ n: ag.episodes.length + 1, steps: ag.stepInEp, outcome: res.event === 'cheese' ? 'queso' : res.event === 'trap' ? 'trampa' : 'limite' });
+    ag.eps = Math.max(EPS_MIN, ag.eps * EPS_DECAY);
+    ag.pos = null;
+  } else {
+    ag.pos = res.pos;
+  }
+  return rec;
+}
+function testStep(Q, ts, rng) {
+  const from = ts.pos, s = sIdx(from);
+  const g = greedy(Q, s, rng);
+  const res = envStep(from, g.a);
+  ts.steps++;
+  ts.pos = res.pos;
+  const limit = !res.done && ts.steps >= MAX_STEPS;
+  if (res.done || limit) { ts.done = true; ts.outcome = res.event === 'cheese' ? 'queso' : res.event === 'trap' ? 'trampa' : 'limite'; }
+  return { kind: 'test', step: ts.steps, from, to: res.pos, a: g.a, tied: g.tied, value: Q[s * 4 + g.a], reward: res.reward, event: res.event, edge: res.edge, done: res.done, limit };
+}
+// CORE-END
+
+const SPEEDS = [1, 2, 4, 8, 15, 30, 60];
+const $ = (id) => document.getElementById(id);
+const cellName = (p) => 'ABCDE'[p.c] + (p.r + 1);
+const f2 = (v) => (Math.abs(v) < 0.005 ? 0 : v).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const sgn = (v) => (v > 0 ? '+' : '') + f2(v);
+const cls = (v) => (v > 0.005 ? 'pos' : v < -0.005 ? 'neg' : '');
+
+let ag = newAgent();
+let mode = 'idle';
+let lastRec = null;
+let recent = [];
+let selected = { ...START };
+let display = { ...START };
+let testState = null, testSnapshot = null;
+let batchTarget = 0;
+
+// ---------- tablero ----------
+const board = $('board');
+const cells = [];
+for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+  const ch = MAP[r][c];
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = 'cell' + (ch === '#' ? ' wall' : ch === 'T' ? ' trap' : ch === 'C' ? ' cheese' : '');
+  el.setAttribute('aria-label', 'Casilla ' + cellName({ r, c }) + (ch === '#' ? ', pared' : ch === 'T' ? ', trampa' : ch === 'C' ? ', queso' : ch === 'S' ? ', inicio' : ''));
+  if (ch === '#') el.disabled = true;
+  if (ch === 'T') el.textContent = '🪤';
+  else if (ch === 'C') el.textContent = '🧀';
+  else if (ch !== '#') {
+    el.innerHTML = '<span class="tint"></span>' + (ch === 'S' ? '<span class="tag">Inicio</span>' : '') + '<span class="arrow"></span><span class="val"></span>';
+  }
+  el.style.gridRow = r + 1; el.style.gridColumn = c + 1;
+  el.addEventListener('click', () => { selected = { r, c }; renderBoard(); renderQ(); });
+  board.appendChild(el);
+  cells.push(el);
+}
+
+function renderBoard() {
+  const Q = ag.Q;
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    const el = cells[r * N + c], ch = MAP[r][c], s = r * N + c;
+    el.classList.toggle('sel', selected.r === r && selected.c === c);
+    el.classList.toggle('from', !!lastRec && lastRec.from.r === r && lastRec.from.c === c);
+    if (ch === '#' || ch === 'T' || ch === 'C') continue;
+    const vals = [0, 1, 2, 3].map((a) => Q[s * 4 + a]);
+    const allZero = vals.every((v) => v === 0);
+    const best = bestActions(Q, s);
+    const arrow = el.querySelector('.arrow'), val = el.querySelector('.val'), tint = el.querySelector('.tint');
+    if (allZero || best.length === 4) { arrow.textContent = '·'; arrow.className = 'arrow muted-arrow'; }
+    else { arrow.textContent = best.map((a) => ACTIONS[a].a).join(''); arrow.className = 'arrow'; }
+    const m = maxQ(Q, s);
+    val.textContent = allZero ? '' : f2(m);
+    if (m > 0) { tint.style.background = 'var(--good)'; tint.style.opacity = Math.min(1, m / 10) * 0.45; }
+    else if (m < 0) { tint.style.background = 'var(--bad)'; tint.style.opacity = Math.min(1, -m / 5) * 0.45; }
+    else tint.style.opacity = 0;
+  }
+  const mouse = $('mouse');
+  mouse.style.transform = `translate(calc(${display.c} * (100% + 4px)), calc(${display.r} * (100% + 4px)))`;
+}
+
+// ---------- valores Q de la casilla elegida ----------
+function renderQ() {
+  $('q-cell').textContent = cellName(selected);
+  const ch = MAP[selected.r][selected.c];
+  if (ch === 'T' || ch === 'C') {
+    $('q-body').innerHTML = `<p class="empty">${ch === 'T' ? 'La trampa' : 'El queso'} termina el intento: el ratón nunca decide desde acá, así que esta casilla no tiene valores Q.</p>`;
+    return;
+  }
+  const s = sIdx(selected), Q = ag.Q;
+  const best = bestActions(Q, s);
+  const allEqual = best.length === 4;
+  const changedA = lastRec && lastRec.kind === 'train' && sIdx(lastRec.from) === s ? lastRec.a : -1;
+  const pos = ['up', 'right', 'down', 'left'];
+  let html = '<div class="compass">';
+  for (let a = 0; a < 4; a++) {
+    const v = Q[s * 4 + a];
+    const isBest = !allEqual && best.includes(a);
+    html += `<div class="cq ${pos[a]}${isBest ? ' best' : ''}${changedA === a ? ' changed' : ''}">
+      <span class="ar">${ACTIONS[a].a}</span><span class="nm">${ACTIONS[a].n}</span>
+      <span class="qv ${cls(v)}">${f2(v)}</span>
+      ${changedA === a ? `<span class="ch">antes ${f2(lastRec.before)}</span>` : ''}
+    </div>`;
+  }
+  html += `<div class="cq center">${cellName(selected)}</div></div>`;
+  html += allEqual
+    ? '<p class="hint">Las cuatro direcciones valen lo mismo: si usa lo aprendido, sortea entre ellas.</p>'
+    : `<p class="hint">Si usa lo aprendido, desde acá iría ${best.length > 1 ? 'hacia ' + best.map((a) => ACTIONS[a].n).join(' o ') + ' (empatan)' : 'hacia ' + ACTIONS[best[0]].n}.</p>`;
+  $('q-body').innerHTML = html;
+}
+
+// ---------- detalle del paso ----------
+function eventText(rec) {
+  if (rec.event === 'wall') return `Chocó contra ${rec.edge ? 'el borde del tablero' : 'una pared'} y se quedó en ${cellName(rec.from)}.`;
+  if (rec.event === 'trap') return `Cayó en la trampa de ${cellName(rec.to)}. El intento terminó.`;
+  if (rec.event === 'cheese') return `¡Encontró el queso en ${cellName(rec.to)}! El intento terminó.`;
+  return `Se movió a ${cellName(rec.to)}.`;
+}
+function renderStep() {
+  const rec = lastRec;
+  if (!rec) {
+    $('step-idx').textContent = '';
+    $('step-body').innerHTML = '<p class="empty">Todavía no hubo ningún paso. Apretá <b>Un paso</b> y acá vas a ver qué hizo el ratón y qué número de la tabla cambió.</p>';
+    return;
+  }
+  const act = `${ACTIONS[rec.a].a} ${ACTIONS[rec.a].n}`;
+  const rewardTxt = `<span class="num ${cls(rec.reward)}">${sgn(rec.reward)}</span> (${rec.event === 'wall' ? 'pared' : rec.event === 'trap' ? 'trampa' : rec.event === 'cheese' ? 'queso' : 'paso normal'})`;
+  if (rec.kind === 'test') {
+    $('step-idx').textContent = `Prueba · paso ${rec.step}`;
+    const why = rec.tied.length > 1
+      ? `Varias direcciones empataban con ${f2(rec.value)}, así que sorteó entre ellas y salió ${act}.`
+      : `Eligió ${act} porque es la dirección con mayor valor en ${cellName(rec.from)} (${f2(rec.value)}).`;
+    $('step-body').innerHTML = `
+      <dl class="facts">
+        <dt>Dónde estaba</dt><dd>${cellName(rec.from)}</dd>
+        <dt>Acción</dt><dd>${act}</dd>
+        <dt>Modo</dt><dd><span class="pill testp">Prueba: usa lo aprendido, sin explorar</span></dd>
+        <dt>Recompensa</dt><dd>${rewardTxt}</dd>
+        <dt>Valor que cambió</dt><dd>Ninguno. En la prueba la tabla Q no se modifica.</dd>
+      </dl>
+      <div class="explain"><p>${why} ${eventText(rec)}${rec.limit ? ' Llegó a 100 movimientos y la prueba se cortó.' : ''}</p></div>`;
+    return;
+  }
+  $('step-idx').textContent = `Intento ${rec.episode} · paso ${rec.step}`;
+  let how;
+  if (rec.explore) {
+    how = `Estaba <b>explorando</b>: sorteó un número (${f2(rec.roll)}) y salió menor que ε = ${f2(rec.eps)}, así que eligió una dirección al azar: ${act}.`;
+  } else if (rec.tied.length > 1) {
+    how = `Usó <b>lo aprendido</b> (el número sorteado, ${f2(rec.roll)}, no fue menor que ε = ${f2(rec.eps)}). ${rec.tied.length === 4 ? 'Las cuatro direcciones' : 'Varias direcciones'} empataban con ${f2(rec.valuesBefore[rec.a])}, así que sorteó entre ellas: ${act}.`;
+  } else {
+    how = `Usó <b>lo aprendido</b> (el número sorteado, ${f2(rec.roll)}, no fue menor que ε = ${f2(rec.eps)}): ${act} era la dirección con mayor valor (${f2(rec.before)}).`;
+  }
+  const targetTxt = rec.done
+    ? `El intento terminó, así que no hay recompensa futura: el objetivo es solo la recompensa, ${sgn(rec.reward)}.`
+    : `Desde ${cellName(rec.to)} lo mejor que conoce vale ${f2(rec.maxNext)}. Objetivo = ${sgn(rec.reward)} + 0,9 × ${f2(rec.maxNext)} = ${f2(rec.target)}.`;
+  const diff = rec.after - rec.before;
+  const verdict = Math.abs(diff) < 1e-9
+    ? 'El valor no cambió porque ya coincidía con el objetivo.'
+    : diff > 0 ? `Subió: ahora ir ${ACTIONS[rec.a].n} desde ${cellName(rec.from)} parece mejor que antes.`
+    : `Bajó: ahora ir ${ACTIONS[rec.a].n} desde ${cellName(rec.from)} parece peor que antes.`;
+  $('step-body').innerHTML = `
+    <dl class="facts">
+      <dt>Dónde estaba</dt><dd>${cellName(rec.from)}</dd>
+      <dt>Acción</dt><dd>${act}</dd>
+      <dt>Modo</dt><dd>${rec.explore ? '<span class="pill explore">Explorando (al azar)</span>' : '<span class="pill exploit">Usando lo aprendido</span>'}</dd>
+      <dt>Recompensa</dt><dd>${rewardTxt}</dd>
+      <dt>Valor que cambió</dt><dd>Q(${cellName(rec.from)}, ${ACTIONS[rec.a].a}): <span class="num ${cls(rec.before)}">${f2(rec.before)}</span> → <span class="num ${cls(rec.after)}">${f2(rec.after)}</span></dd>
+    </dl>
+    <div class="formula">Q nuevo = ${f2(rec.before)} + 0,5 × (${f2(rec.target)} − ${f2(rec.before)}) = ${f2(rec.after)}</div>
+    <div class="explain">
+      <p>${how} ${eventText(rec)}${rec.limit ? ' Llegó a 100 movimientos: el intento se corta (sin tratarlo como final del laberinto).' : ''}</p>
+      <p>${targetTxt} El valor se acercó la mitad del camino hacia ese objetivo. ${verdict}</p>
+    </div>`;
+}
+function pushRecent(rec) {
+  const act = ACTIONS[rec.a].a;
+  const line = rec.kind === 'test'
+    ? `prueba ${rec.step}: ${cellName(rec.from)} ${act} ${sgn(rec.reward)} · sin cambios`
+    : `${rec.episode}.${rec.step}: ${cellName(rec.from)} ${act} ${rec.explore ? 'azar' : 'aprendido'} ${sgn(rec.reward)} · Q ${f2(rec.before)}→${f2(rec.after)}`;
+  recent.unshift(line);
+  recent = recent.slice(0, 6);
+}
+function renderRecent() { $('recent').innerHTML = recent.map((l) => `<li>${l}</li>`).join(''); }
+
+// ---------- estadísticas y gráfico ----------
+function renderStats() {
+  const eps = ag.episodes;
+  $('st-eps').textContent = eps.length;
+  $('st-ok').textContent = eps.filter((e) => e.outcome === 'queso').length;
+  $('st-step').textContent = ag.pos ? ag.stepInEp : 0;
+  $('st-epsv').textContent = f2(ag.eps);
+  if (eps.length) {
+    const last10 = eps.slice(-10);
+    const avg = last10.reduce((s, e) => s + e.steps, 0) / last10.length;
+    $('chart-sum').textContent = `Últimos ${last10.length}: ${last10.filter((e) => e.outcome === 'queso').length} al queso, promedio ${avg.toLocaleString('es-AR', { maximumFractionDigits: 1 })} movimientos`;
+  } else $('chart-sum').textContent = '';
+}
+function color(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function renderChart() {
+  const box = $('chart-box'), cv = $('chart');
+  const w = box.clientWidth, h = box.clientHeight;
+  if (!w || !h) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const L = 34, R = 8, T = 10, B = 24, pw = w - L - R, ph = h - T - B;
+  const muted = color('--muted'), line = color('--line');
+  ctx.font = '11px ' + color('--font-num');
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.lineWidth = 1;
+  for (const v of [0, 25, 50, 75, 100]) {
+    const y = T + ph - v / 100 * ph;
+    ctx.strokeStyle = line; ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(L + pw, y); ctx.stroke();
+    ctx.fillStyle = muted; ctx.fillText(String(v), L - 6, y);
+  }
+  const eps = ag.episodes;
+  const n = Math.max(eps.length, 20);
+  const bw = pw / n;
+  const col = { queso: color('--good'), trampa: color('--bad'), limite: color('--neutral') };
+  eps.forEach((e, i) => {
+    const bh = e.steps / 100 * ph;
+    ctx.fillStyle = col[e.outcome];
+    ctx.fillRect(L + i * bw + (bw > 4 ? 1 : 0), T + ph - bh, Math.max(1, bw - (bw > 4 ? 2 : 0)), bh);
+  });
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillStyle = muted;
+  const stepLbl = n <= 20 ? 5 : n <= 60 ? 10 : n <= 150 ? 25 : n <= 400 ? 50 : 100;
+  for (let k = stepLbl; k <= n; k += stepLbl) ctx.fillText(String(k), L + (k - 0.5) * bw, T + ph + 6);
+  ctx.textAlign = 'left';
+  if (!eps.length) { ctx.fillStyle = muted; ctx.textBaseline = 'middle'; ctx.fillText('Todavía no terminó ningún intento.', L + 10, T + ph / 2); }
+}
+
+function renderAll() { renderBoard(); renderQ(); renderStep(); renderRecent(); renderStats(); renderChart(); }
+
+// ---------- acciones ----------
+function doTrainStep() {
+  const rec = trainStep(ag, Math.random);
+  lastRec = rec;
+  display = { ...rec.to };
+  pushRecent(rec);
+  return rec;
+}
+function setStatus(html) { $('status').innerHTML = html; }
+
+function setMode(m) {
+  mode = m;
+  $('btn-step').disabled = m !== 'idle';
+  $('btn-auto').disabled = !(m === 'idle' || m === 'auto');
+  $('btn-auto').textContent = m === 'auto' ? 'Pausar' : 'Entrenar automáticamente';
+  $('btn-batch').disabled = !(m === 'idle' || m === 'batch');
+  $('btn-batch').textContent = m === 'batch' ? 'Detener' : 'Entrenar 100 intentos';
+  $('btn-test').disabled = !(m === 'idle' || m === 'test');
+  $('btn-test').textContent = m === 'test' ? 'Detener prueba' : 'Probar lo aprendido';
+  $('btn-reset').disabled = m !== 'idle';
+}
+
+let rafId = 0, lastT = 0, acc = 0;
+function startTimer() { lastT = 0; acc = 1; rafId = requestAnimationFrame(tick); }
+function tick(t) {
+  if (mode !== 'auto' && mode !== 'test') return;
+  if (!lastT) lastT = t;
+  acc += (t - lastT) / 1000 * SPEEDS[+$('in-speed').value];
+  lastT = t;
+  let n = Math.min(Math.floor(acc), 30);
+  acc -= Math.floor(acc);
+  while (n-- > 0) {
+    if (mode === 'auto') doTrainStep();
+    else if (mode === 'test') { if (runTestStep()) break; }
+  }
+  if (mode === 'auto') setStatus(`Entrenando… intento <b>${ag.episodes.length + (ag.pos ? 1 : 0)}</b>.`);
+  renderAll();
+  if (mode === 'auto' || mode === 'test') rafId = requestAnimationFrame(tick);
+}
+
+$('btn-step').addEventListener('click', () => {
+  const rec = doTrainStep();
+  setStatus(rec.done || rec.limit ? `Intento ${rec.episode} terminado. El próximo paso empieza otro desde Inicio.` : 'Paso hecho. Mirá abajo a la derecha qué número cambió.');
+  renderAll();
+});
+$('btn-auto').addEventListener('click', () => {
+  if (mode === 'auto') { setMode('idle'); setStatus('En pausa.'); renderAll(); return; }
+  setMode('auto'); startTimer();
+});
+$('in-speed').addEventListener('input', (e) => {
+  const v = SPEEDS[+e.target.value];
+  $('out-speed').textContent = v + (v === 1 ? ' paso por segundo' : ' pasos por segundo');
+});
+
+$('btn-batch').addEventListener('click', () => {
+  if (mode === 'batch') { setMode('idle'); setStatus(`Detenido en el intento ${ag.episodes.length}.`); renderAll(); return; }
+  setMode('batch');
+  const startCount = ag.episodes.length;
+  batchTarget = startCount + 100;
+  const chunk = () => {
+    if (mode !== 'batch') return;
+    const t0 = performance.now();
+    while (ag.episodes.length < batchTarget && performance.now() - t0 < 12) doTrainStep();
+    setStatus(`Entrenando en bloque… <b>${ag.episodes.length - startCount}</b> de 100 intentos.`);
+    renderAll();
+    if (ag.episodes.length < batchTarget) setTimeout(chunk, 0);
+    else { setMode('idle'); setStatus(`Listo: se entrenaron 100 intentos más (${ag.episodes.length} en total). Probá “Probar lo aprendido”.`); }
+  };
+  setTimeout(chunk, 0);
+});
+
+function runTestStep() {
+  const rec = testStep(ag.Q, testState, Math.random);
+  lastRec = rec; display = { ...rec.to };
+  pushRecent(rec);
+  if (testState.done) { finishTest(); return true; }
+  return false;
+}
+function finishTest(stopped) {
+  let same = true;
+  for (let i = 0; i < ag.Q.length; i++) if (ag.Q[i] !== testSnapshot[i]) { same = false; break; }
+  const out = testState.outcome === 'queso' ? `llegó al queso en <b>${testState.steps}</b> movimientos`
+    : testState.outcome === 'trampa' ? `cayó en una trampa en el movimiento ${testState.steps}`
+    : stopped ? `se detuvo en el movimiento ${testState.steps}` : 'no llegó en 100 movimientos';
+  setStatus(`Prueba: ${out}. ${same ? 'Comprobado: los 100 valores de la tabla Q son idénticos a los de antes de la prueba ✓' : '⚠ La tabla Q cambió durante la prueba.'}`);
+  setMode('idle');
+  renderAll();
+}
+$('btn-test').addEventListener('click', () => {
+  if (mode === 'test') { finishTest(true); return; }
+  testState = { pos: { ...START }, steps: 0, done: false, outcome: null };
+  testSnapshot = Float64Array.from(ag.Q);
+  display = { ...START };
+  setMode('test');
+  setStatus('Probando: vuelve al inicio, sin exploración y sin modificar la tabla Q.');
+  renderAll();
+  startTimer();
+});
+$('btn-reset').addEventListener('click', () => {
+  ag = newAgent(); lastRec = null; recent = []; display = { ...START };
+  setStatus('Aprendizaje borrado: la tabla Q volvió a cero y ε a 1.');
+  renderAll();
+});
+
+new ResizeObserver(() => renderChart()).observe($('chart-box'));
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderChart);
+new MutationObserver(renderChart).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+setMode('idle');
+renderAll();
+</script>
+</body>
+</html>
