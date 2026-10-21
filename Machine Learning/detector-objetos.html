@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Detector de objetos</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: visor grande (cámara o foto) con controles debajo; a la derecha lo que ve ahora y los ajustes; debajo cómo funciona y las 80 cosas que reconoce */
+:root {
+  --bg: #eff1f4;
+  --surface: #ffffff;
+  --sunken: #e5e8ee;
+  --ink: #1a1e27;
+  --muted: #5b6273;
+  --line: #d3d8e1;
+  --viewer: #11141b;
+  --accent: #1f6feb;
+  --on-accent: #ffffff;
+  --rec: #d93a3a;
+  --ok-bg: #dcf0e3; --ok-fg: #1d7a43;
+  --warn-bg: #fbefd9; --warn-fg: #8a5300;
+  --bad-bg: #fbe1e4; --bad-fg: #a3263a;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  --font-body: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-num: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  --radius: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1218; --surface: #181c25; --sunken: #222733; --ink: #e8ebf2; --muted: #9ea6b8; --line: #2e3442;
+    --viewer: #07090d; --accent: #5b9bff; --on-accent: #07142b; --rec: #ff6b6b;
+    --ok-bg: #163525; --ok-fg: #6fdc98; --warn-bg: #3a2a0d; --warn-fg: #f4c46b; --bad-bg: #3d1820; --bad-fg: #ff9cab;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1218; --surface: #181c25; --sunken: #222733; --ink: #e8ebf2; --muted: #9ea6b8; --line: #2e3442;
+  --viewer: #07090d; --accent: #5b9bff; --on-accent: #07142b; --rec: #ff6b6b;
+  --ok-bg: #163525; --ok-fg: #6fdc98; --warn-bg: #3a2a0d; --warn-fg: #f4c46b; --bad-bg: #3d1820; --bad-fg: #ff9cab;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 48px;
+}
+.wrap { max-width: 1160px; margin: 0 auto; display: grid; gap: 20px; }
+h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(1.9rem, 5vw, 2.6rem); line-height: 1.05; font-weight: 800; letter-spacing: -0.015em; }
+h2 { font-size: 1.15rem; font-weight: 750; }
+h3 { font-size: 1rem; font-weight: 700; }
+p { margin: 0; }
+header { display: grid; gap: 8px; }
+.eyebrow { font-size: 0.76rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.lede { color: var(--muted); max-width: 66ch; font-size: 1.04rem; }
+.lede b { color: var(--ink); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.hint { font-size: 0.84rem; color: var(--muted); }
+
+.main { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 920px) { .main { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); align-items: start; } }
+.col { display: grid; gap: 14px; min-width: 0; }
+
+/* Visor */
+.stage { padding: 12px; display: grid; gap: 12px; }
+.viewer {
+  position: relative; background: var(--viewer); border-radius: 10px; overflow: hidden;
+  aspect-ratio: 4 / 3; max-width: 100%; display: grid; place-items: center;
+}
+.viewer canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
+.viewer video { display: none; }
+.overlay {
+  position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; text-align: center;
+  color: #e8ebf2; font-size: 1rem; gap: 10px; align-content: center;
+}
+.overlay .big { font-size: 2.6rem; line-height: 1; }
+.overlay .sub { font-size: 0.88rem; color: #a9b1c2; max-width: 46ch; }
+.live {
+  position: absolute; top: 10px; left: 10px; display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(0,0,0,0.55); color: #fff; font-size: 0.8rem; font-weight: 700; padding: 3px 10px; border-radius: 999px;
+}
+.live i { width: 8px; height: 8px; border-radius: 50%; background: var(--rec); }
+.live.paused i { background: #f4c46b; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn {
+  font: inherit; font-weight: 650; font-size: 0.95rem; cursor: pointer; padding: 9px 14px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--sunken); color: var(--ink);
+}
+.btn:hover:not(:disabled) { border-color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+label.btn { display: inline-flex; align-items: center; }
+label.btn input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+label.btn:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+.status { font-size: 0.9rem; padding: 8px 12px; border-radius: 10px; background: var(--sunken); color: var(--muted); }
+.status.ok { background: var(--ok-bg); color: var(--ok-fg); }
+.status.warn { background: var(--warn-bg); color: var(--warn-fg); }
+.status.bad { background: var(--bad-bg); color: var(--bad-fg); }
+
+/* Panel derecho */
+.panel { padding: 16px; display: grid; gap: 12px; }
+.found { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.found li { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 10px; background: var(--sunken); border-radius: 10px; }
+.found .sw { width: 14px; height: 14px; border-radius: 4px; }
+.found .nm { font-weight: 650; min-width: 0; overflow-wrap: anywhere; }
+.found .nm small { color: var(--muted); font-weight: 400; }
+.found .sc { font-family: var(--font-num); font-size: 0.85rem; color: var(--muted); }
+.empty { color: var(--muted); font-size: 0.94rem; }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.stat { background: var(--surface); padding: 8px 10px; display: grid; }
+.stat .k { font-size: 0.74rem; color: var(--muted); }
+.stat .v { font-family: var(--font-num); font-size: 1.05rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.field { display: grid; gap: 4px; }
+.field-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.field-head label { font-weight: 650; font-size: 0.95rem; }
+output { font-family: var(--font-num); font-size: 0.9rem; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+
+/* Explicaciones */
+.learn { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.learn .card { padding: 16px; display: grid; gap: 8px; align-content: start; }
+.learn p, .learn li { color: var(--muted); font-size: 0.95rem; }
+.learn b { color: var(--ink); }
+.learn ol { margin: 0; padding-left: 20px; display: grid; gap: 5px; }
+.classes { padding: 16px; display: grid; gap: 10px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 0.84rem; padding: 2px 10px; border-radius: 999px; background: var(--sunken); color: var(--ink); }
+.chip.seen { background: var(--ok-bg); color: var(--ok-fg); font-weight: 650; }
+footer { font-size: 0.86rem; color: var(--muted); max-width: 80ch; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Visión por computadora · red neuronal ya entrenada</span>
+    <h1>Detector de objetos</h1>
+    <p class="lede">Encendé la cámara y la IA marca con un recuadro las cosas que reconoce: personas, tazas, celulares, sillas y otras 76 categorías. <b>Todo se analiza en tu computadora</b>: la imagen no se envía a ningún lado.</p>
+  </header>
+
+  <div class="main">
+    <div class="col">
+      <section class="stage card" aria-label="Visor">
+        <div class="viewer" id="viewer">
+          <canvas id="canvas" aria-label="Imagen con los objetos detectados"></canvas>
+          <video id="video" playsinline muted></video>
+          <div class="overlay" id="overlay">
+            <span class="big" aria-hidden="true">📷</span>
+            <span id="overlay-text">Cargando el modelo…</span>
+            <span class="sub" id="overlay-sub">La primera vez descarga unos 17 MB. Puede tardar unos segundos.</span>
+          </div>
+          <span class="live" id="live" hidden><i></i><span id="live-text">EN VIVO</span></span>
+        </div>
+        <div class="row">
+          <button class="btn primary" type="button" id="btn-cam" disabled>Encender cámara</button>
+          <button class="btn" type="button" id="btn-pause" disabled>Pausar</button>
+          <button class="btn" type="button" id="btn-switch" hidden>Cambiar de cámara</button>
+          <label class="btn" id="lbl-photo">Usar una foto<input type="file" id="in-photo" accept="image/*" disabled></label>
+        </div>
+        <p class="status" id="status" role="status" aria-live="polite">Cargando el modelo de detección…</p>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="panel card" aria-label="Lo que ve ahora">
+        <h2>Lo que ve ahora</h2>
+        <ul class="found" id="found"><li class="empty" style="display:block;background:none;padding:0">Todavía no analizó ninguna imagen.</li></ul>
+        <p class="hint" id="discarded"></p>
+        <div class="stats">
+          <div class="stat"><span class="k">Objetos</span><span class="v" id="st-n">0</span></div>
+          <div class="stat"><span class="k">Tiempo por análisis</span><span class="v" id="st-ms">–</span></div>
+          <div class="stat"><span class="k">Análisis por segundo</span><span class="v" id="st-fps">–</span></div>
+        </div>
+      </section>
+
+      <section class="panel card" aria-label="Ajustes">
+        <h2>Ajustes</h2>
+        <div class="field">
+          <div class="field-head"><label for="in-score">Confianza mínima</label><output id="out-score">50 %</output></div>
+          <input type="range" id="in-score" min="20" max="95" step="5" value="50">
+          <span class="hint">Solo se muestran los recuadros con un puntaje igual o mayor. Bajalo y aparecen más detecciones, también equivocadas; subilo y quedan solo las más seguras.</span>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <section class="learn">
+    <div class="card">
+      <h3>Qué es</h3>
+      <p>Es una <b>red neuronal ya entrenada</b> llamada COCO-SSD (SSD MobileNet v2, publicada por Google). Aprendió mirando miles de fotos en las que personas marcaron a mano dónde estaba cada objeto (el conjunto de datos COCO).</p>
+      <p>En cada análisis recibe la imagen y devuelve recuadros, cada uno con una categoría y un puntaje.</p>
+    </div>
+    <div class="card">
+      <h3>En qué se diferencia de los juegos anteriores</h3>
+      <p>El ratón o la canasta <b>aprendían mientras jugaban</b>, llenando una tabla de unos cientos de números.</p>
+      <p>Este detector <b>no aprende mientras lo usás</b>: trae unos <b>4 millones de números</b> (los pesos de la red, 17 MB) que se ajustaron antes, durante su entrenamiento. Acá solo los usa para responder.</p>
+    </div>
+    <div class="card">
+      <h3>Qué significa el porcentaje</h3>
+      <p>Es el <b>puntaje</b> que la red le da a esa detección. Más alto quiere decir más parecido a lo que vio al entrenar, pero <b>no es una garantía</b>: “90 %” no significa que acierte 9 de cada 10 veces.</p>
+      <p>Si algo no está entre sus 80 categorías, no lo puede nombrar: lo ignora o lo confunde con lo más parecido que conoce.</p>
+    </div>
+    <div class="card">
+      <h3>Tres experimentos</h3>
+      <ol>
+        <li>Bajá la <b>confianza mínima a 20 %</b>: van a aparecer detecciones equivocadas. Subila a 90 % y mirá cuáles reales desaparecen.</li>
+        <li>Mostrale algo que <b>no está en la lista</b> de abajo, como un lápiz o una lámpara, y mirá qué hace.</li>
+        <li>Tapá la mitad de una taza, alejala o apagá una luz: mirá cómo cambia el puntaje.</li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="classes card" aria-label="Qué puede reconocer">
+    <h2>Las 80 cosas que puede reconocer</h2>
+    <p class="hint">En verde, las que ya detectó en esta sesión.</p>
+    <div class="chips" id="chips"></div>
+  </section>
+
+  <footer>La cámara y las fotos se analizan solo en este navegador. Hace falta internet para descargar la librería TensorFlow.js y el modelo; después la detección corre en tu equipo.</footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<script>
+const CLASES = {
+  'person': 'persona', 'bicycle': 'bicicleta', 'car': 'auto', 'motorcycle': 'moto', 'airplane': 'avión', 'bus': 'colectivo',
+  'train': 'tren', 'truck': 'camión', 'boat': 'bote', 'traffic light': 'semáforo', 'fire hydrant': 'hidrante',
+  'stop sign': 'señal de pare', 'parking meter': 'parquímetro', 'bench': 'banco', 'bird': 'pájaro', 'cat': 'gato',
+  'dog': 'perro', 'horse': 'caballo', 'sheep': 'oveja', 'cow': 'vaca', 'elephant': 'elefante', 'bear': 'oso',
+  'zebra': 'cebra', 'giraffe': 'jirafa', 'backpack': 'mochila', 'umbrella': 'paraguas', 'handbag': 'cartera',
+  'tie': 'corbata', 'suitcase': 'valija', 'frisbee': 'frisbee', 'skis': 'esquís', 'snowboard': 'snowboard',
+  'sports ball': 'pelota', 'kite': 'barrilete', 'baseball bat': 'bate de béisbol', 'baseball glove': 'guante de béisbol',
+  'skateboard': 'skate', 'surfboard': 'tabla de surf', 'tennis racket': 'raqueta de tenis', 'bottle': 'botella',
+  'wine glass': 'copa', 'cup': 'taza', 'fork': 'tenedor', 'knife': 'cuchillo', 'spoon': 'cuchara', 'bowl': 'bol',
+  'banana': 'banana', 'apple': 'manzana', 'sandwich': 'sándwich', 'orange': 'naranja', 'broccoli': 'brócoli',
+  'carrot': 'zanahoria', 'hot dog': 'pancho', 'pizza': 'pizza', 'donut': 'dona', 'cake': 'torta', 'chair': 'silla',
+  'couch': 'sillón', 'potted plant': 'planta en maceta', 'bed': 'cama', 'dining table': 'mesa', 'toilet': 'inodoro',
+  'tv': 'televisor', 'laptop': 'notebook', 'mouse': 'mouse', 'remote': 'control remoto', 'keyboard': 'teclado',
+  'cell phone': 'celular', 'microwave': 'microondas', 'oven': 'horno', 'toaster': 'tostadora', 'sink': 'pileta',
+  'refrigerator': 'heladera', 'book': 'libro', 'clock': 'reloj', 'vase': 'florero', 'scissors': 'tijera',
+  'teddy bear': 'oso de peluche', 'hair drier': 'secador de pelo', 'toothbrush': 'cepillo de dientes',
+};
+const KEYS = Object.keys(CLASES);
+const nombre = (c) => CLASES[c] || c;
+const colorDe = (c) => `hsl(${(KEYS.indexOf(c) * 137.5) % 360}, 85%, 55%)`;
+const MODEL_FILES = 'modelo/model.json';
+
+const $ = (id) => document.getElementById(id);
+const video = $('video'), canvas = $('canvas'), ctx = canvas.getContext('2d');
+let model = null, stream = null, mode = 'idle', paused = false, mirror = false;
+let facing = 'environment', lastPreds = [], source = null, minScore = 0.5;
+let msAvg = null, lastFrameAt = 0, fpsAvg = null, busy = false;
+const seen = new Set();
+
+function setStatus(text, kind) { const s = $('status'); s.textContent = text; s.className = 'status' + (kind ? ' ' + kind : ''); }
+function setOverlay(text, sub, show = true) {
+  $('overlay').hidden = !show;
+  if (show) { $('overlay-text').textContent = text; $('overlay-sub').textContent = sub || ''; }
+}
+
+async function loadModel() {
+  if (typeof cocoSsd === 'undefined' || typeof tf === 'undefined') {
+    setStatus('No se pudo descargar la librería de IA. Revisá tu conexión a internet y recargá la página.', 'bad');
+    setOverlay('Sin conexión', 'Hace falta internet para descargar la librería y el modelo.');
+    return;
+  }
+  try {
+    if (location.protocol !== 'file:') {
+      try { model = await cocoSsd.load({ base: 'lite_mobilenet_v2', modelUrl: MODEL_FILES }); } catch (e) { model = null; }
+    }
+    if (!model) model = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
+    $('btn-cam').disabled = false;
+    $('in-photo').disabled = false;
+    setStatus('Modelo listo. Encendé la cámara o elegí una foto.', 'ok');
+    setOverlay('Listo para mirar', 'Apretá “Encender cámara”. El navegador te va a pedir permiso.');
+  } catch (e) {
+    setStatus('No se pudo cargar el modelo. Revisá tu conexión a internet y recargá la página.', 'bad');
+    setOverlay('No se pudo cargar el modelo', String(e && e.message || e));
+  }
+}
+
+// ---------- cámara ----------
+async function startCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus('Este navegador no permite usar la cámara acá. Abrí el archivo en Chrome o Edge en tu computadora, o usá una foto.', 'warn');
+    return;
+  }
+  $('btn-cam').disabled = true;
+  setStatus('Pidiendo permiso para usar la cámara…');
+  try {
+    stopCamera(false);
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    video.srcObject = stream;
+    await video.play();
+    const fm = stream.getVideoTracks()[0].getSettings().facingMode;
+    mirror = fm ? fm === 'user' : true;
+    mode = 'camera'; paused = false; source = video;
+    $('btn-cam').textContent = 'Apagar cámara';
+    $('btn-pause').disabled = false; $('btn-pause').textContent = 'Pausar';
+    $('live').hidden = false; $('live').classList.remove('paused'); $('live-text').textContent = 'EN VIVO';
+    setOverlay('', '', false);
+    setStatus('Cámara encendida. Mostrale objetos: una taza, tu celular, una botella…', 'ok');
+    try {
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      $('btn-switch').hidden = devs.filter((d) => d.kind === 'videoinput').length < 2;
+    } catch (e) {}
+    lastFrameAt = 0;
+    requestAnimationFrame(loop);
+  } catch (err) {
+    mode = 'idle';
+    const msg = {
+      NotAllowedError: 'No hay permiso para usar la cámara. Tocá el candado o el ícono de cámara en la barra de direcciones, elegí “Permitir” y volvé a intentar. Si ves esta página publicada en claude.ai, la cámara está bloqueada: abrí el archivo en tu computadora o usá una foto.',
+      NotFoundError: 'No se encontró ninguna cámara conectada.',
+      NotReadableError: 'La cámara está ocupada por otro programa (por ejemplo Zoom o Teams). Cerralo y volvé a intentar.',
+      OverconstrainedError: 'Esa cámara no está disponible. Probá con “Cambiar de cámara”.',
+    }[err && err.name] || 'No se pudo encender la cámara: ' + (err && err.message || err);
+    setStatus(msg, 'warn');
+  } finally {
+    $('btn-cam').disabled = false;
+  }
+}
+function stopCamera(updateUi = true) {
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = null;
+  video.srcObject = null;
+  if (mode === 'camera') mode = 'idle';
+  if (!updateUi) return;
+  $('btn-cam').textContent = 'Encender cámara';
+  $('btn-pause').disabled = true;
+  $('btn-switch').hidden = true;
+  $('live').hidden = true;
+  setStatus('Cámara apagada.', null);
+  setOverlay('Cámara apagada', 'Podés volver a encenderla o elegir una foto.', !lastPreds.length);
+}
+
+async function loop() {
+  if (mode !== 'camera' || paused) return;
+  if (!busy && video.readyState >= 2) {
+    busy = true;
+    const t0 = performance.now();
+    const preds = await model.detect(video, 20, 0.2);
+    const dt = performance.now() - t0;
+    busy = false;
+    if (mode !== 'camera' || paused) return;
+    msAvg = msAvg === null ? dt : msAvg * 0.85 + dt * 0.15;
+    const now = performance.now();
+    if (lastFrameAt) { const f = 1000 / (now - lastFrameAt); fpsAvg = fpsAvg === null ? f : fpsAvg * 0.85 + f * 0.15; }
+    lastFrameAt = now;
+    lastPreds = preds;
+    draw();
+  }
+  requestAnimationFrame(loop);
+}
+
+// ---------- foto ----------
+$('in-photo').addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const img = new Image();
+  img.onload = async () => {
+    if (mode === 'camera') stopCamera();
+    mode = 'photo'; source = img; mirror = false;
+    setOverlay('', '', false);
+    setStatus('Analizando la foto…');
+    const t0 = performance.now();
+    lastPreds = await model.detect(img, 20, 0.2);
+    msAvg = performance.now() - t0; fpsAvg = null;
+    draw();
+    setStatus(`Foto analizada en ${Math.round(msAvg)} ms. Mové la confianza mínima para ver cómo cambian los recuadros.`, 'ok');
+    URL.revokeObjectURL(img.src);
+  };
+  img.onerror = () => setStatus('No se pudo abrir esa imagen. Probá con un archivo JPG o PNG.', 'warn');
+  img.src = URL.createObjectURL(file);
+});
+
+// ---------- dibujo ----------
+function draw() {
+  const w = source === video ? video.videoWidth : source.naturalWidth;
+  const h = source === video ? video.videoHeight : source.naturalHeight;
+  if (!w || !h) return;
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; $('viewer').style.aspectRatio = `${w} / ${h}`; }
+  ctx.save();
+  if (mirror) { ctx.translate(w, 0); ctx.scale(-1, 1); }
+  ctx.drawImage(source, 0, 0, w, h);
+  ctx.restore();
+  const shown = lastPreds.filter((p) => p.score >= minScore);
+  const fs = Math.max(14, Math.round(w / 42));
+  ctx.font = `700 ${fs}px "Segoe UI", system-ui, sans-serif`;
+  ctx.textBaseline = 'top';
+  for (const p of shown) {
+    let [x, y, bw, bh] = p.bbox;
+    if (mirror) x = w - x - bw;
+    const col = colorDe(p.class);
+    ctx.lineWidth = Math.max(3, w / 300);
+    ctx.strokeStyle = col;
+    ctx.strokeRect(x, y, bw, bh);
+    const label = `${nombre(p.class)} ${Math.round(p.score * 100)} %`;
+    const tw = ctx.measureText(label).width + fs * 0.6;
+    const ty = y > fs * 1.5 ? y - fs * 1.4 : y;
+    ctx.fillStyle = col;
+    ctx.fillRect(x - ctx.lineWidth / 2, ty, tw, fs * 1.4);
+    ctx.fillStyle = '#0b0d12';
+    ctx.fillText(label, x + fs * 0.3, ty + fs * 0.2);
+    seen.add(p.class);
+  }
+  renderPanel(shown);
+}
+
+function renderPanel(shown) {
+  const groups = new Map();
+  for (const p of shown) {
+    const g = groups.get(p.class) || { n: 0, best: 0 };
+    g.n++; g.best = Math.max(g.best, p.score);
+    groups.set(p.class, g);
+  }
+  const items = [...groups.entries()].sort((a, b) => b[1].n - a[1].n || b[1].best - a[1].best);
+  $('found').innerHTML = items.length
+    ? items.map(([c, g]) => `<li><span class="sw" style="background:${colorDe(c)}"></span><span class="nm">${nombre(c)}${g.n > 1 ? ` <small>× ${g.n}</small>` : ''}</span><span class="sc">${g.n > 1 ? 'mejor ' : ''}${Math.round(g.best * 100)} %</span></li>`).join('')
+    : `<li class="empty" style="display:block;background:none;padding:0">No ve nada con ${Math.round(minScore * 100)} % o más de confianza.</li>`;
+  const hidden = lastPreds.length - shown.length;
+  $('discarded').textContent = hidden > 0
+    ? `${hidden} ${hidden === 1 ? 'detección quedó oculta' : 'detecciones quedaron ocultas'} por estar debajo de ${Math.round(minScore * 100)} %.`
+    : '';
+  $('st-n').textContent = shown.length;
+  $('st-ms').textContent = msAvg === null ? '–' : Math.round(msAvg) + ' ms';
+  $('st-fps').textContent = mode === 'camera' && fpsAvg !== null ? fpsAvg.toFixed(1) : '–';
+  renderChips();
+}
+function renderChips() {
+  $('chips').innerHTML = KEYS.slice().sort((a, b) => nombre(a).localeCompare(nombre(b), 'es'))
+    .map((c) => `<span class="chip${seen.has(c) ? ' seen' : ''}">${nombre(c)}</span>`).join('');
+}
+
+// ---------- controles ----------
+$('btn-cam').addEventListener('click', () => { if (mode === 'camera') stopCamera(); else startCamera(); });
+$('btn-pause').addEventListener('click', () => {
+  if (mode !== 'camera') return;
+  paused = !paused;
+  if (paused) video.pause(); else video.play();
+  $('btn-pause').textContent = paused ? 'Seguir' : 'Pausar';
+  $('live').classList.toggle('paused', paused);
+  $('live-text').textContent = paused ? 'EN PAUSA' : 'EN VIVO';
+  setStatus(paused ? 'Imagen congelada: podés mirar los recuadros con calma o mover la confianza mínima.' : 'Analizando de nuevo.', paused ? null : 'ok');
+  if (!paused) { lastFrameAt = 0; requestAnimationFrame(loop); }
+});
+$('btn-switch').addEventListener('click', () => { facing = facing === 'environment' ? 'user' : 'environment'; startCamera(); });
+$('in-score').addEventListener('input', (e) => {
+  minScore = +e.target.value / 100;
+  $('out-score').textContent = e.target.value + ' %';
+  if (source && (mode === 'photo' || paused)) draw();
+});
+document.addEventListener('visibilitychange', () => { if (document.hidden && mode === 'camera' && !paused) $('btn-pause').click(); });
+
+renderChips();
+loadModel();
+</script>
+</body>
+</html>
